@@ -1,0 +1,21 @@
+version: "3.9"
+
+services:
+  trackerview:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: trackerview
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      PORT: ${PORT:-3000}
+      TRACKER_BASE_URL: ${TRACKER_BASE_URL:-https://tracker.example/forum}
+      TRACKER_USERNAME: ${TRACKER_USERNAME}
+      TRACKER_PASSWORD: ${TRACKER_PASSWORD}
+      TRACKER_MAX_RELEASES: ${TRACKER_MAX_RELEASES:-80}
+      TRACKER_CONCURRENCY: ${TRACKER_CONCURRENCY:-4}
+      TRACKER_REQUEST_TIMEOUT_MS: ${TRACKER_REQUEST_TIMEOUT_MS:-25000}

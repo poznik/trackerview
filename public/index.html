@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TrackerView</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="aurora" aria-hidden="true"></div>
+    <main class="app-shell">
+      <header class="app-header">
+        <p class="eyebrow">Tracker Dashboard</p>
+        <h1>TrackerView</h1>
+        <p class="subtitle">
+          Paste a tracker page URL and get a clean release table with poster, description,
+          publication date, seeds, and release size.
+        </p>
+      </header>
+
+      <section class="panel controls">
+        <form id="load-form" autocomplete="off">
+          <label for="source-url">Source page URL</label>
+          <div class="control-row">
+            <input
+              id="source-url"
+              name="source-url"
+              type="url"
+              placeholder="https://tracker.example/forum/viewtopic.php?t=3268103"
+            />
+            <input
+              id="max-releases"
+              name="max-releases"
+              type="number"
+              min="1"
+              max="500"
+              value="80"
+              title="Maximum number of releases to parse"
+            />
+            <button id="load-btn" type="submit">Load releases</button>
+          </div>
+        </form>
+
+        <div class="status-row">
+          <p id="status">Idle</p>
+          <p id="progress-counter">Processed: 0/0</p>
+          <p id="summary"></p>
+        </div>
+
+        <div class="category-filter-block">
+          <p class="category-filter-title">Category filters</p>
+          <div id="category-filters" class="category-filters">
+            <p class="category-empty">Categories will appear after loading releases.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel table-panel">
+        <div class="table-wrap">
+          <table id="releases-table">
+            <thead>
+              <tr>
+                <th>Poster</th>
+                <th>Description</th>
+                <th>Published</th>
+                <th>Seeds</th>
+                <th>Size</th>
+              </tr>
+            </thead>
+            <tbody id="releases-body">
+              <tr>
+                <td colspan="5" class="placeholder">
+                  No data loaded. Submit a URL to build the release table.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
