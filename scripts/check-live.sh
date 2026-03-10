@@ -43,7 +43,7 @@ if "9.28" not in size or "GB" not in size.upper():
     raise SystemExit(f"Unexpected size value: {size!r}")
 
 seeds = release.get("seeds")
-if not isinstance(seeds, int) or seeds < 0:
+if not ((isinstance(seeds, int) and seeds >= 0) or seeds == "-"):
     raise SystemExit(f"Unexpected seeds value: {seeds!r}")
 
 print(f"Release OK: seeds={seeds}, size={size}")
@@ -60,11 +60,15 @@ releases = payload.get("releases")
 if not isinstance(releases, list) or not releases:
     raise SystemExit("Collection response has no releases")
 
-ok_seed = any(isinstance(item.get("seeds"), int) for item in releases if isinstance(item, dict))
+ok_seed = any(
+    (isinstance(item.get("seeds"), int) and item.get("seeds") >= 0) or item.get("seeds") == "-"
+    for item in releases
+    if isinstance(item, dict)
+)
 ok_size = any(bool(str(item.get("size", "")).strip()) for item in releases if isinstance(item, dict))
 
 if not ok_seed:
-    raise SystemExit("No release with parsed seeds in collection response")
+    raise SystemExit("No release with seeds or cached marker in collection response")
 if not ok_size:
     raise SystemExit("No release with parsed size in collection response")
 

@@ -4,13 +4,15 @@ const crypto = require("crypto");
 
 const { config } = require("./config");
 const { TrackerClient } = require("./trackerClient");
-const { parseReleasePage, parseReleasesFromCollection } = require("./parser");
+const { parseReleasePage, parseReleasesFromCollection, enrichReleaseScreenshots } = require("./parser");
 const { createCategoryStore } = require("./categoryStore");
+const { createSavedSearchStore, normalizeSearchName, normalizeSearchUrl } = require("./savedSearchStore");
 
 const app = express();
 const parseJobs = new Map();
 const PARSE_JOB_TTL_MS = 30 * 60 * 1000;
 const categoryStore = createCategoryStore(path.join(__dirname, "..", "data", "categories.json"));
+const savedSearchStore = createSavedSearchStore(path.join(__dirname, "..", "data", "saved-searches.json"));
 
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "..", "public")));
@@ -86,6 +88,36 @@ app.get("/api/categories", (_, response) => {
   });
 });
 
+app.get("/api/saved-searches", (_, response) => {
+  response.json({
+    searches: savedSearchStore.list()
+  });
+});
+
+app.post("/api/saved-searches", (request, response) => {
+  const name = normalizeSearchName(request.body?.name);
+  const url = normalizeSearchUrl(request.body?.url);
+
+  if (!name) {
+    return response.status(400).json({ error: "name must not be empty." });
+  }
+
+  if (!url) {
+    return response.status(400).json({ error: "url must be a valid URL." });
+  }
+
+  try {
+    const result = savedSearchStore.upsert({ name, url });
+    return response.status(result.changed ? 201 : 200).json({
+      changed: result.changed,
+      search: result.search,
+      searches: savedSearchStore.list()
+    });
+  } catch (error) {
+    return response.status(400).json({ error: error.message || "Failed to save search." });
+  }
+});
+
 app.post("/api/categories", (request, response) => {
   const categories = Array.isArray(request.body?.categories) ? request.body.categories : null;
   if (!categories) {
@@ -115,7 +147,8 @@ app.post("/api/release", async (request, response) => {
       return response.status(502).json({ error: `Failed to load release page (HTTP ${page.status}).` });
     }
 
-    const release = parseReleasePage(releaseUrl, page.text);
+    let release = parseReleasePage(releaseUrl, page.text);
+    release = await enrichReleaseScreenshots(release);
     if (release.category) {
       categoryStore.ensureCategory(release.category);
     }

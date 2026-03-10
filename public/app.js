@@ -2,15 +2,26 @@ const DEFAULT_SOURCE_URL = "https://tracker.example/forum/viewtopic.php?t=326810
 
 const form = document.getElementById("load-form");
 const sourceInput = document.getElementById("source-url");
+const savedSearchesSelect = document.getElementById("saved-searches-select");
 const maxReleasesInput = document.getElementById("max-releases");
 const loadButton = document.getElementById("load-btn");
+const saveSearchButton = document.getElementById("save-search-btn");
+const filtersToggleButton = document.getElementById("filters-toggle");
+const filtersPanel = document.getElementById("filters-panel");
 const statusNode = document.getElementById("status");
 const summaryNode = document.getElementById("summary");
 const progressNode = document.getElementById("progress-counter");
 const categoryFiltersNode = document.getElementById("category-filters");
 const tableBody = document.getElementById("releases-body");
+const saveSearchDialog = document.getElementById("save-search-dialog");
+const saveSearchForm = document.getElementById("save-search-form");
+const saveSearchNameInput = document.getElementById("save-search-name");
+const saveSearchUrlNode = document.getElementById("save-search-url");
+const saveSearchCancelButton = document.getElementById("save-search-cancel");
+const saveSearchSubmitButton = document.getElementById("save-search-submit");
 
 const JOB_POLL_INTERVAL_MS = 800;
+const TRACKER_TEXT_SEARCH_URL = "https://tracker.example/forum/tracker.php";
 const hoverPanel = document.createElement("div");
 const hoverPanelImage = document.createElement("img");
 
@@ -42,6 +53,8 @@ const monthIndexByName = {
 };
 
 let allReleases = [];
+let savedSearches = [];
+let lastSuccessfulSearchUrl = "";
 const categoryState = new Map();
 
 hoverPanel.className = "poster-hover-panel";
@@ -55,6 +68,135 @@ function delay(ms) {
 function normalizeCategoryName(value) {
   const normalized = String(value || "").replace(/\s+/g, " ").trim();
   return normalized || "Без категории";
+}
+
+function normalizeSearchUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  try {
+    const parsed = new URL(raw);
+    parsed.hash = "";
+    return parsed.toString();
+  } catch (error) {
+    return "";
+  }
+}
+
+function buildTrackerSearchUrlFromText(rawQuery) {
+  const queryText = String(rawQuery || "").replace(/\s+/g, " ").trim();
+  if (!queryText) {
+    return "";
+  }
+
+  const url = new URL(TRACKER_TEXT_SEARCH_URL);
+  url.searchParams.set("o", "1");
+  url.searchParams.set("s", "2");
+  url.searchParams.set("tm", "-1");
+  url.searchParams.set("nm", queryText);
+  url.searchParams.set("f", "-1");
+  return url.toString();
+}
+
+function resolveSourceRequest(rawValue) {
+  const entered = String(rawValue || "").trim();
+  if (!entered) {
+    return {
+      mode: "default",
+      rawInput: "",
+      pageUrl: DEFAULT_SOURCE_URL
+    };
+  }
+
+  const normalizedUrl = normalizeSearchUrl(entered);
+  if (normalizedUrl) {
+    return {
+      mode: "url",
+      rawInput: entered,
+      pageUrl: normalizedUrl
+    };
+  }
+
+  return {
+    mode: "text",
+    rawInput: entered,
+    pageUrl: buildTrackerSearchUrlFromText(entered)
+  };
+}
+
+function suggestSearchName(url) {
+  const normalized = normalizeSearchUrl(url);
+  if (!normalized) {
+    return "";
+  }
+
+  try {
+    const parsed = new URL(normalized);
+    const topicId = parsed.searchParams.get("t");
+    const forumId = parsed.searchParams.get("f");
+
+    if (topicId && /^\d+$/.test(topicId)) {
+      return `${parsed.hostname} t=${topicId}`;
+    }
+
+    if (forumId && /^\d+$/.test(forumId)) {
+      return `${parsed.hostname} f=${forumId}`;
+    }
+
+    const pathText = parsed.pathname && parsed.pathname !== "/" ? parsed.pathname : "";
+    return `${parsed.hostname}${pathText}`;
+  } catch (error) {
+    return "";
+  }
+}
+
+function findSavedSearchByUrl(url) {
+  const normalized = normalizeSearchUrl(url);
+  if (!normalized) {
+    return null;
+  }
+
+  for (const entry of savedSearches) {
+    if (normalizeSearchUrl(entry?.url) === normalized) {
+      return entry;
+    }
+  }
+
+  return null;
+}
+
+function renderSavedSearches() {
+  savedSearchesSelect.innerHTML = "";
+
+  const placeholderOption = document.createElement("option");
+  placeholderOption.value = "";
+  placeholderOption.textContent = "Saved searches";
+  savedSearchesSelect.appendChild(placeholderOption);
+
+  for (const entry of savedSearches) {
+    const normalizedUrl = normalizeSearchUrl(entry?.url);
+    if (!normalizedUrl) {
+      continue;
+    }
+
+    const option = document.createElement("option");
+    option.value = normalizedUrl;
+    option.textContent = String(entry?.name || normalizedUrl);
+    option.title = normalizedUrl;
+    savedSearchesSelect.appendChild(option);
+  }
+}
+
+function setSaveSearchButtonVisible(visible) {
+  saveSearchButton.classList.toggle("hidden", !visible);
+}
+
+function setFiltersExpanded(expanded) {
+  const isExpanded = Boolean(expanded);
+  filtersPanel.hidden = !isExpanded;
+  filtersToggleButton.setAttribute("aria-expanded", String(isExpanded));
 }
 
 function parsePublicationDateToTimestamp(value) {
@@ -128,7 +270,7 @@ function renderPlaceholder(text) {
   clearTable();
   const row = document.createElement("tr");
   const cell = document.createElement("td");
-  cell.colSpan = 5;
+  cell.colSpan = 4;
   cell.className = "placeholder";
   cell.textContent = text;
   row.appendChild(cell);
@@ -144,6 +286,7 @@ function truncate(text, maxLength) {
 
 function hidePosterPreview() {
   hoverPanel.style.display = "none";
+  hoverPanelImage.onerror = null;
   hoverPanelImage.src = "";
 }
 
@@ -166,14 +309,26 @@ function movePosterPreview(event) {
   hoverPanel.style.top = `${top}px`;
 }
 
-function showPosterPreview(event, image) {
-  const sourceUrl = image.currentSrc || image.src;
+function showImagePreview(event, image, preferredUrl = "", scale = 2, fallbackToThumb = true) {
+  const sourceUrl = preferredUrl || image.currentSrc || image.src;
+  const fallbackUrl = fallbackToThumb ? image.currentSrc || image.src : "";
   if (!sourceUrl) {
     return;
   }
 
-  const previewWidth = Math.round(image.clientWidth * 2);
+  const normalizedScale = Number.isFinite(scale) && scale > 0 ? scale : 2;
+  const previewWidth = Math.round(image.clientWidth * normalizedScale);
   hoverPanel.style.width = `${Math.max(120, previewWidth)}px`;
+
+  hoverPanelImage.onerror = () => {
+    hoverPanelImage.onerror = null;
+    if (fallbackUrl && sourceUrl !== fallbackUrl) {
+      hoverPanelImage.src = fallbackUrl;
+      return;
+    }
+    hidePosterPreview();
+  };
+
   hoverPanelImage.src = sourceUrl;
   hoverPanelImage.alt = image.alt || "Poster preview";
   hoverPanel.style.display = "block";
@@ -199,7 +354,7 @@ function createPosterCell(release) {
   image.loading = "lazy";
   image.referrerPolicy = "no-referrer";
 
-  image.addEventListener("mouseenter", (event) => showPosterPreview(event, image));
+  image.addEventListener("mouseenter", (event) => showImagePreview(event, image));
   image.addEventListener("mousemove", (event) => movePosterPreview(event));
   image.addEventListener("mouseleave", () => hidePosterPreview());
 
@@ -215,8 +370,73 @@ function createPosterCell(release) {
   return cell;
 }
 
+function createScreenshotsBlock(release) {
+  const screenshots = Array.isArray(release?.screenshots) ? release.screenshots : [];
+  if (screenshots.length === 0) {
+    return null;
+  }
+
+  const wrap = document.createElement("div");
+  wrap.className = "screenshots-wrap";
+
+  const label = document.createElement("p");
+  label.className = "screenshots-title";
+  label.textContent = "Screenshots";
+  wrap.appendChild(label);
+
+  const grid = document.createElement("div");
+  grid.className = "screenshots-grid";
+
+  for (const screenshot of screenshots) {
+    const thumbUrl = String(screenshot?.thumbUrl || "").trim();
+    const fullUrl = String(screenshot?.fullUrl || thumbUrl).trim();
+    const previewUrl = String(screenshot?.previewUrl || "").trim();
+    if (!thumbUrl) {
+      continue;
+    }
+
+    const link = document.createElement("a");
+    link.href = fullUrl || thumbUrl;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.className = "screenshot-link";
+
+    const image = document.createElement("img");
+    image.src = thumbUrl;
+    image.alt = "Screenshot";
+    image.className = "screenshot-thumb";
+    image.loading = "lazy";
+    image.decoding = "async";
+    image.referrerPolicy = "no-referrer";
+
+    image.addEventListener("mouseenter", (event) =>
+      showImagePreview(event, image, previewUrl || fullUrl || thumbUrl, 6, false)
+    );
+    image.addEventListener("mousemove", (event) => movePosterPreview(event));
+    image.addEventListener("mouseleave", () => hidePosterPreview());
+
+    image.addEventListener("error", () => {
+      image.remove();
+      if (!link.querySelector("img")) {
+        link.remove();
+      }
+    });
+
+    link.appendChild(image);
+    grid.appendChild(link);
+  }
+
+  if (!grid.children.length) {
+    return null;
+  }
+
+  wrap.appendChild(grid);
+  return wrap;
+}
+
 function createDescriptionCell(release) {
   const cell = document.createElement("td");
+  cell.className = "description-cell";
 
   const titleLink = document.createElement("a");
   titleLink.href = release.topicUrl;
@@ -233,6 +453,8 @@ function createDescriptionCell(release) {
   description.className = "desc";
   description.textContent = truncate(release.description || "No description", 420);
 
+  const screenshots = createScreenshotsBlock(release);
+
   const meta = document.createElement("p");
   meta.className = "meta";
   meta.textContent = `Topic ID: ${release.topicId || "-"}`;
@@ -240,6 +462,9 @@ function createDescriptionCell(release) {
   cell.appendChild(titleLink);
   cell.appendChild(category);
   cell.appendChild(description);
+  if (screenshots) {
+    cell.appendChild(screenshots);
+  }
   cell.appendChild(meta);
   return cell;
 }
@@ -250,24 +475,23 @@ function createDateCell(release) {
   return cell;
 }
 
-function createSeedsCell(release) {
-  const cell = document.createElement("td");
-  const badge = document.createElement("span");
-  badge.className = "seed-badge";
-
-  if (typeof release.seeds === "number") {
-    badge.textContent = String(release.seeds);
-  } else {
-    badge.textContent = "N/A";
-  }
-
-  cell.appendChild(badge);
-  return cell;
-}
-
 function createSizeCell(release) {
   const cell = document.createElement("td");
-  cell.textContent = release.size || "-";
+  const sizeText = String(release?.size || "").trim() || "-";
+  const torrentUrl = String(release?.torrentUrl || "").trim();
+
+  if (torrentUrl) {
+    const link = document.createElement("a");
+    link.href = torrentUrl;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.className = "size-link";
+    link.textContent = sizeText;
+    cell.appendChild(link);
+    return cell;
+  }
+
+  cell.textContent = sizeText;
   return cell;
 }
 
@@ -285,7 +509,7 @@ function renderReleases(releases) {
       row.className = "error-row";
 
       const cell = document.createElement("td");
-      cell.colSpan = 5;
+      cell.colSpan = 4;
       cell.textContent = `Failed to parse ${release.topicUrl}: ${release.error}`;
       row.appendChild(cell);
       tableBody.appendChild(row);
@@ -296,7 +520,6 @@ function renderReleases(releases) {
     row.appendChild(createPosterCell(release));
     row.appendChild(createDescriptionCell(release));
     row.appendChild(createDateCell(release));
-    row.appendChild(createSeedsCell(release));
     row.appendChild(createSizeCell(release));
     tableBody.appendChild(row);
   }
@@ -491,6 +714,72 @@ async function loadSavedCategories() {
   renderCategoryFilters();
 }
 
+async function loadSavedSearches() {
+  const response = await fetch("/api/saved-searches");
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.error || `Failed to load saved searches (HTTP ${response.status}).`);
+  }
+
+  savedSearches = Array.isArray(payload.searches) ? payload.searches : [];
+  renderSavedSearches();
+}
+
+async function upsertSavedSearchOnServer(name, url) {
+  const response = await fetch("/api/saved-searches", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ name, url })
+  });
+
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.error || `Failed to save search (HTTP ${response.status}).`);
+  }
+
+  savedSearches = Array.isArray(payload.searches) ? payload.searches : savedSearches;
+  renderSavedSearches();
+  return payload.search || null;
+}
+
+function openSaveSearchDialog() {
+  const currentUrl = normalizeSearchUrl(lastSuccessfulSearchUrl) || normalizeSearchUrl(sourceInput.value);
+  if (!currentUrl) {
+    setStatus("Enter a valid URL before saving search.", true);
+    return;
+  }
+
+  const existing = findSavedSearchByUrl(currentUrl);
+  const initialName = existing?.name || suggestSearchName(currentUrl) || "Saved search";
+
+  saveSearchUrlNode.textContent = currentUrl;
+  saveSearchNameInput.value = initialName;
+
+  if (typeof saveSearchDialog.showModal === "function") {
+    saveSearchDialog.showModal();
+    saveSearchNameInput.focus();
+    saveSearchNameInput.select();
+    return;
+  }
+
+  // Fallback for very old browsers.
+  const name = window.prompt("Сохранить поиск", initialName);
+  if (!name) {
+    return;
+  }
+
+  upsertSavedSearchOnServer(name, currentUrl)
+    .then(() => {
+      setStatus("Search saved.");
+      savedSearchesSelect.value = currentUrl;
+    })
+    .catch((error) => {
+      setStatus(error.message || "Failed to save search.", true);
+    });
+}
+
 window.addEventListener("scroll", () => hidePosterPreview(), true);
 window.addEventListener("resize", () => hidePosterPreview());
 
@@ -500,24 +789,87 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
+setFiltersExpanded(false);
+setSaveSearchButtonVisible(false);
+
+savedSearchesSelect.addEventListener("change", () => {
+  const selectedUrl = normalizeSearchUrl(savedSearchesSelect.value);
+  if (!selectedUrl) {
+    return;
+  }
+  sourceInput.value = selectedUrl;
+});
+
+sourceInput.addEventListener("input", () => {
+  const normalized = normalizeSearchUrl(sourceInput.value);
+  const existing = findSavedSearchByUrl(normalized);
+  savedSearchesSelect.value = existing ? normalized : "";
+});
+
+filtersToggleButton.addEventListener("click", () => {
+  setFiltersExpanded(filtersPanel.hidden);
+});
+
+saveSearchButton.addEventListener("click", () => {
+  openSaveSearchDialog();
+});
+
+saveSearchCancelButton.addEventListener("click", () => {
+  saveSearchDialog.close();
+});
+
+saveSearchForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+
+  const url = normalizeSearchUrl(saveSearchUrlNode.textContent) || normalizeSearchUrl(sourceInput.value);
+  const name = String(saveSearchNameInput.value || "").trim();
+
+  if (!url) {
+    setStatus("Search URL is invalid.", true);
+    return;
+  }
+
+  if (!name) {
+    saveSearchNameInput.focus();
+    setStatus("Search name must not be empty.", true);
+    return;
+  }
+
+  saveSearchSubmitButton.disabled = true;
+
+  try {
+    await upsertSavedSearchOnServer(name, url);
+    sourceInput.value = url;
+    savedSearchesSelect.value = url;
+    lastSuccessfulSearchUrl = url;
+    setStatus("Search saved.");
+    saveSearchDialog.close();
+  } catch (error) {
+    setStatus(error.message || "Failed to save search.", true);
+  } finally {
+    saveSearchSubmitButton.disabled = false;
+  }
+});
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
 
-  const enteredUrl = sourceInput.value.trim();
-  const pageUrl = enteredUrl || DEFAULT_SOURCE_URL;
+  const sourceRequest = resolveSourceRequest(sourceInput.value);
+  const pageUrl = sourceRequest.pageUrl;
   const maxReleasesValue = Number.parseInt(String(maxReleasesInput.value || "").trim(), 10);
   const maxReleases =
     Number.isFinite(maxReleasesValue) && maxReleasesValue > 0
       ? Math.min(maxReleasesValue, 500)
       : undefined;
 
-  if (!enteredUrl) {
+  if (!sourceRequest.rawInput) {
     sourceInput.value = DEFAULT_SOURCE_URL;
   }
 
   loadButton.disabled = true;
+  setSaveSearchButtonVisible(false);
   hidePosterPreview();
-  setStatus("Starting parse job...");
+  setStatus(sourceRequest.mode === "text" ? "Starting text search parse job..." : "Starting parse job...");
   setProgress(0, 0);
   summaryNode.textContent = "";
   allReleases = [];
@@ -566,11 +918,24 @@ form.addEventListener("submit", async (event) => {
     summaryNode.textContent = `Found ${finalJob.totalFound} links. Parsed ${parsed} releases.`;
     setProgress(finalJob.processed, finalJob.totalFound);
     setStatus("Done");
+    lastSuccessfulSearchUrl = normalizeSearchUrl(pageUrl) || pageUrl;
+    if (lastSuccessfulSearchUrl) {
+      if (sourceRequest.mode === "text") {
+        sourceInput.value = sourceRequest.rawInput;
+        savedSearchesSelect.value = "";
+      } else {
+        sourceInput.value = lastSuccessfulSearchUrl;
+        const existing = findSavedSearchByUrl(lastSuccessfulSearchUrl);
+        savedSearchesSelect.value = existing ? lastSuccessfulSearchUrl : "";
+      }
+      setSaveSearchButtonVisible(true);
+    }
   } catch (error) {
     renderPlaceholder("Unable to load releases. Check tracker URL and credentials.");
     summaryNode.textContent = "";
     setProgress(0, 0);
     setStatus(error.message || "Unexpected error", true);
+    setSaveSearchButtonVisible(false);
   } finally {
     loadButton.disabled = false;
   }
@@ -582,5 +947,11 @@ form.addEventListener("submit", async (event) => {
     await loadSavedCategories();
   } catch (error) {
     renderCategoryFilters();
+  }
+
+  try {
+    await loadSavedSearches();
+  } catch (error) {
+    renderSavedSearches();
   }
 })();

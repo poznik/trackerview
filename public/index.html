@@ -13,21 +13,31 @@
         <p class="eyebrow">Tracker Dashboard</p>
         <h1>TrackerView</h1>
         <p class="subtitle">
-          Paste a tracker page URL and get a clean release table with poster, description,
-          publication date, seeds, and release size.
+          Paste a tracker page URL or type search text to build a clean release table with poster,
+          description, publication date and release size.
         </p>
       </header>
 
       <section class="panel controls">
         <form id="load-form" autocomplete="off">
-          <label for="source-url">Source page URL</label>
+          <label for="source-url">Source URL or text query</label>
           <div class="control-row">
-            <input
-              id="source-url"
-              name="source-url"
-              type="url"
-              placeholder="https://tracker.example/forum/viewtopic.php?t=3268103"
-            />
+            <div class="source-input-wrap">
+              <input
+                id="source-url"
+                name="source-url"
+                type="text"
+                placeholder="https://tracker.example/forum/viewtopic.php?t=3268103 or search text"
+              />
+              <select
+                id="saved-searches-select"
+                name="saved-searches-select"
+                title="Saved searches"
+                aria-label="Saved searches"
+              >
+                <option value="">Saved searches</option>
+              </select>
+            </div>
             <input
               id="max-releases"
               name="max-releases"
@@ -38,8 +48,25 @@
               title="Maximum number of releases to parse"
             />
             <button id="load-btn" type="submit">Load releases</button>
+            <button
+              id="save-search-btn"
+              type="button"
+              title="Save search"
+              aria-label="Save search"
+              class="save-search-btn hidden"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path
+                  d="M4 3h13l3 3v15H4V3zm2 2v14h12V7.2L16.2 5H6zm2 0h7v4H8V5zm0 8h8v6H8v-6z"
+                ></path>
+              </svg>
+            </button>
           </div>
         </form>
+
+        <button id="filters-toggle" type="button" class="filters-toggle" aria-expanded="false">
+          Filters
+        </button>
 
         <div class="status-row">
           <p id="status">Idle</p>
@@ -47,7 +74,7 @@
           <p id="summary"></p>
         </div>
 
-        <div class="category-filter-block">
+        <div class="category-filter-block" id="filters-panel" hidden>
           <p class="category-filter-title">Category filters</p>
           <div id="category-filters" class="category-filters">
             <p class="category-empty">Categories will appear after loading releases.</p>
@@ -63,14 +90,13 @@
                 <th>Poster</th>
                 <th>Description</th>
                 <th>Published</th>
-                <th>Seeds</th>
                 <th>Size</th>
               </tr>
             </thead>
             <tbody id="releases-body">
               <tr>
-                <td colspan="5" class="placeholder">
-                  No data loaded. Submit a URL to build the release table.
+                <td colspan="4" class="placeholder">
+                  No data loaded. Submit a URL or text query to build the release table.
                 </td>
               </tr>
             </tbody>
@@ -78,6 +104,26 @@
         </div>
       </section>
     </main>
+
+    <dialog id="save-search-dialog" class="save-search-dialog">
+      <form id="save-search-form" method="dialog" novalidate>
+        <h2>Сохранить поиск</h2>
+        <p id="save-search-url" class="save-search-url"></p>
+        <label for="save-search-name">Search name</label>
+        <input
+          id="save-search-name"
+          name="save-search-name"
+          type="text"
+          maxlength="140"
+          placeholder="My tracker page"
+          required
+        />
+        <div class="dialog-actions">
+          <button type="button" id="save-search-cancel" class="secondary-btn">Cancel</button>
+          <button type="submit" id="save-search-submit">Save</button>
+        </div>
+      </form>
+    </dialog>
 
     <script src="/app.js"></script>
   </body>
