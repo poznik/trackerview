@@ -1,7 +1,7 @@
 const path = require("path");
 const { execSync } = require("child_process");
 
-const VERSION_PREFIX = "1.0.";
+const VERSION_PREFIX = "1.1.";
 const VERSION_STAMP_OFFSET_MS = 4 * 60 * 60 * 1000; // UTC+4
 
 function toTwoDigits(value) {
@@ -38,7 +38,7 @@ function normalizeExplicitVersion(rawValue) {
     return "";
   }
 
-  if (/^1\.0\.\d{10}$/.test(value)) {
+  if (/^1\.1\.\d{10}$/.test(value)) {
     return value;
   }
 
@@ -67,4 +67,3 @@ function resolveAppVersion() {
 module.exports = {
   resolveAppVersion
 };
-

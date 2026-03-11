@@ -25,11 +25,11 @@ TrackerView — веб-приложение для парсинга страни
 
 ## Версионирование
 
-- Формат версии: `1.0.YYMMDDHHMM`.
+- Формат версии: `1.1.YYMMDDHHMM`.
 - Часовой пояс для штампа времени: `UTC+4`.
-- Значение `1.0` фиксированное.
+- Значение `1.1` фиксированное.
 - Третья часть версии вычисляется из времени последнего git-коммита (head) при запуске приложения.
-- Можно задать явную версию через `APP_VERSION` (например `1.0.2603111805`).
+- Можно задать явную версию через `APP_VERSION` (например `1.1.2603111805`).
 
 ## Требования
 
@@ -217,8 +217,9 @@ nohup /var/packages/Node.js_v22/target/usr/local/bin/node src/server.js >> /volu
 | `TRACKER_TEXT_SEARCH_PATH` | `tracker.php` | нет | Путь/URL для текстового поиска (резолвится от `TRACKER_BASE_URL`) |
 | `TRACKER_USERNAME` | `` | да | Логин трекера |
 | `TRACKER_PASSWORD` | `` | да | Пароль трекера |
+| `TRACKER_DIRECT_DOWNLOAD_DIR` | `` | no | Absolute path for server-side torrent download button (for example `/volume1/Downloads`) |
 | `APP_UPDATE_SCRIPT_PATH` | `./update.sh` | нет | Путь до скрипта обновления, вызываемого кнопкой `Update app` |
-| `APP_VERSION` | `` | нет | Явная версия приложения в формате `1.0.YYMMDDHHMM` (если пусто, вычисляется автоматически из git head) |
+| `APP_VERSION` | `` | нет | Явная версия приложения в формате `1.1.YYMMDDHHMM` (если пусто, вычисляется автоматически из git head) |
 | `TRACKER_MAX_RELEASES` | `80` | нет | Значение `maxReleases` по умолчанию |
 | `TRACKER_HARD_MAX_RELEASES` | `700` | нет | Верхний предел `maxReleases` для запросов |
 | `TRACKER_CONCURRENCY` | `4` | нет | Параллелизм парсинга страниц релизов |

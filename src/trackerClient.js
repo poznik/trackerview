@@ -167,6 +167,7 @@ class TrackerClient {
       status: response.status,
       ok: response.ok,
       contentType: response.headers.get("content-type") || "",
+      contentDisposition: response.headers.get("content-disposition") || "",
       buffer,
       text: decodeHtml(buffer, response.headers.get("content-type") || "")
     };

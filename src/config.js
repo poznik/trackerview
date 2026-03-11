@@ -17,6 +17,7 @@ const config = {
     textSearchPath: process.env.TRACKER_TEXT_SEARCH_PATH || "tracker.php",
     username: process.env.TRACKER_USERNAME || "",
     password: process.env.TRACKER_PASSWORD || "",
+    directDownloadDir: process.env.TRACKER_DIRECT_DOWNLOAD_DIR || "",
     maxReleases: toNumber(process.env.TRACKER_MAX_RELEASES, 80),
     hardMaxReleases: toNumber(process.env.TRACKER_HARD_MAX_RELEASES, 700),
     concurrency: toNumber(process.env.TRACKER_CONCURRENCY, 4),

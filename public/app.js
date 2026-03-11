@@ -28,6 +28,8 @@ const filtersPanel = document.getElementById("filters-panel");
 const statusNode = document.getElementById("status");
 const summaryNode = document.getElementById("summary");
 const progressNode = document.getElementById("progress-counter");
+const qualityFiltersTitleNode = document.getElementById("quality-filters-title");
+const qualityFiltersNode = document.getElementById("quality-filters");
 const categoryFiltersNode = document.getElementById("category-filters");
 const tableBody = document.getElementById("releases-body");
 const tableHeaderPosterNode = document.getElementById("table-header-poster");
@@ -59,6 +61,8 @@ const DEFAULT_UI_TEXTS = {
   saved_searches: "Saved searches",
   load_releases: "Load releases",
   filters: "Filters",
+  quality_filters_title: "Quality filters",
+  quality_filters_empty: "Quality filters will appear after loading releases.",
   status_idle: "Idle",
   status_done: "Done",
   status_processing: "Processing releases...",
@@ -81,7 +85,7 @@ const DEFAULT_UI_TEXTS = {
   table_size: "Size",
   table_no_data: "No data loaded. Submit a URL or text query to build the release table.",
   table_no_parsed: "No releases were parsed from this page.",
-  table_no_matches: "No releases match selected categories.",
+  table_no_matches: "No releases match selected filters.",
   table_waiting: "Waiting for parsed releases...",
   table_unable_to_load: "Unable to load releases. Check tracker URL and credentials.",
   summary_scanning: "Scanning source page for release links...",
@@ -90,17 +94,25 @@ const DEFAULT_UI_TEXTS = {
   signed_in_as_template: "Signed in as {username}",
   update_button: "Update app",
   logout_button: "Log out",
-  seeds_prefix: "Seeds:"
+  seeds_prefix: "Seeds:",
+  download_to_server: "Save to server",
+  download_to_server_done_template: "Saved to server: {fileName}",
+  download_to_server_failed: "Failed to save file to server folder.",
+  download_badge_done: "Downloaded"
 };
 let uiTexts = { ...DEFAULT_UI_TEXTS };
 const hoverPanel = document.createElement("div");
 const hoverPanelImage = document.createElement("img");
 const clientConfig = {
-  appVersion: "1.0.0000000000",
+  appVersion: "1.1.0000000000",
   defaultSourceUrl: "",
   maxReleases: 80,
-  hardMaxReleases: 700
+  hardMaxReleases: 700,
+  directDownloadEnabled: false
 };
+const DATE_SORT_DESC = "desc";
+const DATE_SORT_ASC = "asc";
+const QUALITY_NA_LABEL = "N/A";
 
 const monthIndexByName = {
   янв: 0,
@@ -134,7 +146,11 @@ let savedSearches = [];
 let lastSuccessfulSearchUrl = "";
 let isAuthenticated = false;
 let isUpdateAvailable = false;
+let releaseDateSortOrder = DATE_SORT_DESC;
 const categoryState = new Map();
+const qualityFilterState = new Map();
+let availableQualityOptions = [];
+const downloadedReleaseKeys = new Set();
 
 hoverPanel.className = "poster-hover-panel";
 hoverPanel.appendChild(hoverPanelImage);
@@ -193,23 +209,28 @@ function applyUiTexts() {
   savedSearchesSelect.title = resolveUiText("saved_searches", DEFAULT_UI_TEXTS.saved_searches);
   savedSearchesSelect.setAttribute("aria-label", resolveUiText("saved_searches", DEFAULT_UI_TEXTS.saved_searches));
   savedSearchesPlaceholderOption.textContent = resolveUiText("saved_searches", DEFAULT_UI_TEXTS.saved_searches);
+  qualityFiltersTitleNode.textContent = resolveUiText(
+    "quality_filters_title",
+    DEFAULT_UI_TEXTS.quality_filters_title
+  );
 
   tableHeaderPosterNode.textContent = resolveUiText("table_poster", DEFAULT_UI_TEXTS.table_poster);
   tableHeaderDescriptionNode.textContent = resolveUiText(
     "table_description",
     DEFAULT_UI_TEXTS.table_description
   );
-  tableHeaderPublishedNode.textContent = resolveUiText("table_published", DEFAULT_UI_TEXTS.table_published);
+  updateReleaseDateHeader();
   tableHeaderSizeNode.textContent = resolveUiText("table_size", DEFAULT_UI_TEXTS.table_size);
   tablePlaceholderCell.textContent = resolveUiText("table_no_data", DEFAULT_UI_TEXTS.table_no_data);
 
   updateButton.textContent = resolveUiText("update_button", DEFAULT_UI_TEXTS.update_button);
   logoutButton.textContent = resolveUiText("logout_button", DEFAULT_UI_TEXTS.logout_button);
+  renderQualityFilters();
 }
 
 function setAppVersion(version) {
   const normalized = String(version || "").trim();
-  if (!/^1\.0\.\d{10}$/.test(normalized)) {
+  if (!/^1\.1\.\d{10}$/.test(normalized)) {
     return;
   }
 
@@ -240,11 +261,15 @@ function resetDataState() {
   savedSearches = [];
   lastSuccessfulSearchUrl = "";
   categoryState.clear();
+  qualityFilterState.clear();
+  availableQualityOptions = [];
+  downloadedReleaseKeys.clear();
   sourceInput.value = "";
   savedSearchesSelect.value = "";
   summaryNode.textContent = "";
   setProgress(0, 0);
   renderSavedSearches();
+  renderQualityFilters();
   renderCategoryFilters();
   renderPlaceholder(resolveUiText("table_no_data", DEFAULT_UI_TEXTS.table_no_data));
 }
@@ -496,6 +521,227 @@ function setFiltersExpanded(expanded) {
   filtersToggleButton.setAttribute("aria-expanded", String(isExpanded));
 }
 
+function mapKValueToHeight(kValue) {
+  if (!Number.isFinite(kValue) || kValue <= 0) {
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  if (kValue >= 8) {
+    return 4320;
+  }
+
+  if (kValue >= 5) {
+    return 2880;
+  }
+
+  if (kValue >= 4) {
+    return 2160;
+  }
+
+  if (kValue >= 3) {
+    return 1800;
+  }
+
+  if (kValue >= 2) {
+    return 1440;
+  }
+
+  return 1080;
+}
+
+function extractQualityFromTitle(title) {
+  const normalized = String(title || "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е");
+  if (!normalized) {
+    return null;
+  }
+
+  const candidates = [];
+  const pushCandidate = (label, height, confidence = 0) => {
+    if (!label || !Number.isFinite(height) || height <= 0) {
+      return;
+    }
+
+    candidates.push({ label, height, confidence });
+  };
+
+  for (const match of normalized.matchAll(/(?:^|[^0-9a-zа-я])(\d{3,4})\s*[pр]\b/giu)) {
+    const value = Number.parseInt(match[1], 10);
+    if (!Number.isFinite(value) || value < 100 || value > 9000) {
+      continue;
+    }
+    pushCandidate(`${value}p`, value, 5);
+  }
+
+  for (const match of normalized.matchAll(
+    /(?:^|[^0-9])((?:540|576|720|900|960|1024|1080|1200|1440|1600|1800|2160|2880|4320))(?:[^0-9]|$)/giu
+  )) {
+    const value = Number.parseInt(match[1], 10);
+    if (!Number.isFinite(value)) {
+      continue;
+    }
+    pushCandidate(`${value}p`, value, 3);
+  }
+
+  for (const match of normalized.matchAll(/(?:^|[^0-9a-zа-я])(\d(?:[.,]\d+)?)\s*[kк]\b/giu)) {
+    const value = Number.parseFloat(String(match[1]).replace(",", "."));
+    if (!Number.isFinite(value) || value <= 0) {
+      continue;
+    }
+
+    const renderedValue = Number.isInteger(value) ? String(value) : String(value).replace(/\.0+$/, "");
+    pushCandidate(`${renderedValue}K`, mapKValueToHeight(value), 6);
+  }
+
+  for (const match of normalized.matchAll(/(\d{3,4})\s*[xх×]\s*(\d{3,4})/giu)) {
+    const left = Number.parseInt(match[1], 10);
+    const right = Number.parseInt(match[2], 10);
+    if (!Number.isFinite(left) || !Number.isFinite(right)) {
+      continue;
+    }
+
+    const height = Math.min(left, right);
+    if (!Number.isFinite(height) || height < 100 || height > 9000) {
+      continue;
+    }
+
+    pushCandidate(`${height}p`, height, 4);
+  }
+
+  if (/\b(?:uhd|ultra\s*hd)\b/iu.test(normalized)) {
+    pushCandidate("4K", 2160, 2);
+  }
+  if (/\bqhd\b/iu.test(normalized)) {
+    pushCandidate("2K", 1440, 2);
+  }
+  if (/\bfhd\b/iu.test(normalized)) {
+    pushCandidate("1080p", 1080, 2);
+  }
+  if (/\bhd\b/iu.test(normalized) && !/\b(?:uhd|qhd|fhd)\b/iu.test(normalized)) {
+    pushCandidate("720p", 720, 1);
+  }
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  candidates.sort((left, right) => {
+    if (right.height !== left.height) {
+      return right.height - left.height;
+    }
+    return right.confidence - left.confidence;
+  });
+
+  return candidates[0];
+}
+
+function normalizeQualityLabel(value) {
+  const normalized = String(value || "").replace(/\s+/g, " ").trim();
+  return normalized || QUALITY_NA_LABEL;
+}
+
+function resolveQualityBadgeTone(quality) {
+  if (!quality || quality.label === QUALITY_NA_LABEL) {
+    return "na";
+  }
+
+  const height = Number(quality?.height);
+  if (!Number.isFinite(height)) {
+    return "red";
+  }
+
+  if (height >= 1440) {
+    return "blue";
+  }
+
+  if (height >= 1080) {
+    return "green";
+  }
+
+  if (height >= 720) {
+    return "yellow";
+  }
+
+  return "red";
+}
+
+function resolveReleaseQualityInfo(release) {
+  const detectedQuality = extractQualityFromTitle(release?.title);
+
+  if (!detectedQuality) {
+    return {
+      label: QUALITY_NA_LABEL,
+      height: Number.NEGATIVE_INFINITY,
+      tone: "na"
+    };
+  }
+
+  const normalizedQuality = {
+    label: normalizeQualityLabel(detectedQuality.label),
+    height: Number.isFinite(detectedQuality.height) ? detectedQuality.height : Number.NEGATIVE_INFINITY
+  };
+
+  return {
+    ...normalizedQuality,
+    tone: resolveQualityBadgeTone(normalizedQuality)
+  };
+}
+
+function createQualityBadge(qualityInfo) {
+  const resolvedQuality =
+    qualityInfo && typeof qualityInfo === "object"
+      ? qualityInfo
+      : {
+          label: QUALITY_NA_LABEL,
+          height: Number.NEGATIVE_INFINITY,
+          tone: "na"
+        };
+
+  const badge = document.createElement("span");
+  badge.className = `quality-badge quality-badge--${resolvedQuality.tone || "na"}`;
+  badge.textContent = resolvedQuality.label;
+  badge.title = `Detected from title: ${resolvedQuality.label}`;
+  return badge;
+}
+
+function normalizeReleaseDateSortOrder(value) {
+  return value === DATE_SORT_ASC ? DATE_SORT_ASC : DATE_SORT_DESC;
+}
+
+function updateReleaseDateHeader() {
+  const normalizedOrder = normalizeReleaseDateSortOrder(releaseDateSortOrder);
+  const baseLabel = resolveUiText("table_published", DEFAULT_UI_TEXTS.table_published);
+  const arrow = normalizedOrder === DATE_SORT_ASC ? "↑" : "↓";
+
+  tableHeaderPublishedNode.textContent = `${baseLabel} ${arrow}`;
+  tableHeaderPublishedNode.classList.add("sortable-header");
+  tableHeaderPublishedNode.tabIndex = 0;
+  tableHeaderPublishedNode.setAttribute(
+    "aria-sort",
+    normalizedOrder === DATE_SORT_ASC ? "ascending" : "descending"
+  );
+}
+
+function setReleaseDateSortOrder(nextOrder) {
+  const normalizedOrder = normalizeReleaseDateSortOrder(nextOrder);
+  if (releaseDateSortOrder === normalizedOrder) {
+    updateReleaseDateHeader();
+    return;
+  }
+
+  releaseDateSortOrder = normalizedOrder;
+  updateReleaseDateHeader();
+  if (allReleases.length > 0) {
+    updateTableView();
+  }
+}
+
+function toggleReleaseDateSortOrder() {
+  setReleaseDateSortOrder(releaseDateSortOrder === DATE_SORT_DESC ? DATE_SORT_ASC : DATE_SORT_DESC);
+}
+
 function parsePublicationDateToTimestamp(value) {
   const raw = String(value || "")
     .replace(/^\[\s*/, "")
@@ -525,16 +771,29 @@ function parsePublicationDateToTimestamp(value) {
   return Number.isFinite(fallback) ? fallback : Number.NEGATIVE_INFINITY;
 }
 
-function sortReleasesByDate(releases) {
+function sortReleasesByDate(releases, sortOrder = releaseDateSortOrder) {
+  const normalizedOrder = normalizeReleaseDateSortOrder(sortOrder);
+
   return [...(releases || [])].sort((left, right) => {
     const leftTs = parsePublicationDateToTimestamp(left?.publicationDate);
     const rightTs = parsePublicationDateToTimestamp(right?.publicationDate);
+    const leftHasDate = Number.isFinite(leftTs);
+    const rightHasDate = Number.isFinite(rightTs);
 
-    if (rightTs !== leftTs) {
-      return rightTs - leftTs;
+    if (leftHasDate !== rightHasDate) {
+      return leftHasDate ? -1 : 1;
     }
 
-    return String(right?.topicId || "").localeCompare(String(left?.topicId || ""));
+    if (leftHasDate && rightHasDate && rightTs !== leftTs) {
+      return normalizedOrder === DATE_SORT_ASC ? leftTs - rightTs : rightTs - leftTs;
+    }
+
+    const topicIdCompare = String(left?.topicId || "").localeCompare(String(right?.topicId || ""));
+    if (topicIdCompare !== 0) {
+      return normalizedOrder === DATE_SORT_ASC ? topicIdCompare : -topicIdCompare;
+    }
+
+    return String(left?.topicUrl || "").localeCompare(String(right?.topicUrl || ""));
   });
 }
 
@@ -790,10 +1049,140 @@ function createDateCell(release) {
   return cell;
 }
 
-function createSizeCell(release) {
+function resolveReleaseRowKey(release) {
+  const topicId = String(release?.topicId || "").trim();
+  if (topicId) {
+    return `topic:${topicId}`;
+  }
+
+  const topicUrl = String(release?.topicUrl || "").trim();
+  if (topicUrl) {
+    return `topic-url:${topicUrl}`;
+  }
+
+  const torrentUrl = String(release?.torrentUrl || "").trim();
+  if (torrentUrl) {
+    return `torrent:${torrentUrl}`;
+  }
+
+  const title = String(release?.title || "").trim();
+  if (title) {
+    return `title:${title}`;
+  }
+
+  return "";
+}
+
+function isReleaseDownloaded(release) {
+  const key = resolveReleaseRowKey(release);
+  return Boolean(key) && downloadedReleaseKeys.has(key);
+}
+
+function markReleaseAsDownloaded(release) {
+  const key = resolveReleaseRowKey(release);
+  if (!key) {
+    return false;
+  }
+
+  const hadKey = downloadedReleaseKeys.has(key);
+  downloadedReleaseKeys.add(key);
+  return !hadKey;
+}
+
+function applyDownloadedRowState(row, release) {
+  row.classList.toggle("release-row-downloaded", isReleaseDownloaded(release));
+}
+
+function createServerDownloadControl(release, onDownloaded) {
+  if (!clientConfig.directDownloadEnabled) {
+    return null;
+  }
+
+  const torrentUrl = String(release?.torrentUrl || "").trim();
+  if (!torrentUrl) {
+    return null;
+  }
+
+  const wrap = document.createElement("div");
+  wrap.className = "server-download-wrap";
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "server-download-btn";
+  button.title = resolveUiText("download_to_server", DEFAULT_UI_TEXTS.download_to_server);
+  button.setAttribute("aria-label", resolveUiText("download_to_server", DEFAULT_UI_TEXTS.download_to_server));
+  button.innerHTML =
+    '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 4h16v9H4V4zm2 2v5h12V6H6zm-2 9h16v5H4v-5zm3 2a1 1 0 100 2 1 1 0 000-2zm10 0v2h2v-2h-2z"></path></svg>';
+
+  const toast = document.createElement("span");
+  toast.className = "server-download-toast";
+  toast.textContent = resolveUiText("download_badge_done", DEFAULT_UI_TEXTS.download_badge_done);
+
+  let hideToastTimer = null;
+
+  button.addEventListener("click", async () => {
+    if (button.disabled) {
+      return;
+    }
+
+    button.disabled = true;
+
+    try {
+      const payload = await fetchJson("/api/releases/download-to-dir", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          torrentUrl,
+          title: String(release?.title || "")
+        })
+      });
+
+      const fileName = String(payload?.fileName || "").trim() || "file.torrent";
+      setStatus(
+        formatUiTemplate(
+          "download_to_server_done_template",
+          { fileName },
+          DEFAULT_UI_TEXTS.download_to_server_done_template
+        )
+      );
+
+      if (typeof onDownloaded === "function") {
+        onDownloaded();
+      }
+
+      toast.textContent = resolveUiText("download_badge_done", DEFAULT_UI_TEXTS.download_badge_done);
+      toast.classList.add("visible");
+      if (hideToastTimer) {
+        clearTimeout(hideToastTimer);
+      }
+      hideToastTimer = setTimeout(() => {
+        toast.classList.remove("visible");
+      }, 2000);
+    } catch (error) {
+      setStatus(error.message || resolveUiText("download_to_server_failed", DEFAULT_UI_TEXTS.download_to_server_failed), true);
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  wrap.appendChild(button);
+  wrap.appendChild(toast);
+  return wrap;
+}
+
+function createSizeCell(release, row) {
   const cell = document.createElement("td");
+  cell.className = "size-cell";
+  const content = document.createElement("div");
+  content.className = "size-cell-content";
   const sizeText = String(release?.size || "").trim() || "-";
   const torrentUrl = String(release?.torrentUrl || "").trim();
+  const qualityInfo = resolveReleaseQualityInfo(release);
+  const qualityBadge = createQualityBadge(qualityInfo);
+
+  content.appendChild(qualityBadge);
 
   if (torrentUrl) {
     const link = document.createElement("a");
@@ -802,11 +1191,27 @@ function createSizeCell(release) {
     link.rel = "noopener noreferrer";
     link.className = "size-link";
     link.textContent = sizeText;
-    cell.appendChild(link);
+    link.addEventListener("click", () => {
+      markReleaseAsDownloaded(release);
+      applyDownloadedRowState(row, release);
+    });
+    content.appendChild(link);
+    const serverDownloadControl = createServerDownloadControl(release, () => {
+      markReleaseAsDownloaded(release);
+      applyDownloadedRowState(row, release);
+    });
+    if (serverDownloadControl) {
+      content.appendChild(serverDownloadControl);
+    }
+    cell.appendChild(content);
     return cell;
   }
 
-  cell.textContent = sizeText;
+  const sizeValue = document.createElement("span");
+  sizeValue.className = "size-value";
+  sizeValue.textContent = sizeText;
+  content.appendChild(sizeValue);
+  cell.appendChild(content);
   return cell;
 }
 
@@ -832,11 +1237,172 @@ function renderReleases(releases) {
     }
 
     const row = document.createElement("tr");
+    applyDownloadedRowState(row, release);
     row.appendChild(createPosterCell(release));
     row.appendChild(createDescriptionCell(release));
     row.appendChild(createDateCell(release));
-    row.appendChild(createSizeCell(release));
+    row.appendChild(createSizeCell(release, row));
     tableBody.appendChild(row);
+  }
+}
+
+function buildQualityFilterPayload(entries) {
+  return entries.map((entry) => ({
+    name: normalizeQualityLabel(entry.name),
+    enabled: Boolean(entry.enabled)
+  }));
+}
+
+async function upsertQualityFiltersOnServer(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return null;
+  }
+
+  return fetchJson("/api/quality-filters", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      qualities: buildQualityFilterPayload(entries)
+    })
+  });
+}
+
+function mergeQualityFiltersIntoState(qualities) {
+  let changed = false;
+
+  for (const quality of qualities || []) {
+    const name = normalizeQualityLabel(quality?.name);
+    const enabled = typeof quality?.enabled === "boolean" ? quality.enabled : true;
+
+    if (!qualityFilterState.has(name)) {
+      qualityFilterState.set(name, enabled);
+      changed = true;
+      continue;
+    }
+
+    if (qualityFilterState.get(name) !== enabled) {
+      qualityFilterState.set(name, enabled);
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
+function compareQualityOptions(left, right) {
+  const leftName = normalizeQualityLabel(left?.name);
+  const rightName = normalizeQualityLabel(right?.name);
+  const leftIsNa = leftName === QUALITY_NA_LABEL;
+  const rightIsNa = rightName === QUALITY_NA_LABEL;
+
+  if (leftIsNa !== rightIsNa) {
+    return leftIsNa ? 1 : -1;
+  }
+
+  const leftHeight = Number.isFinite(left?.height) ? left.height : Number.NEGATIVE_INFINITY;
+  const rightHeight = Number.isFinite(right?.height) ? right.height : Number.NEGATIVE_INFINITY;
+
+  if (rightHeight !== leftHeight) {
+    return rightHeight - leftHeight;
+  }
+
+  return leftName.localeCompare(rightName, "en", { sensitivity: "base" });
+}
+
+function renderQualityFilters() {
+  qualityFiltersNode.innerHTML = "";
+
+  const options = [...availableQualityOptions].sort(compareQualityOptions);
+
+  if (options.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "category-empty";
+    empty.textContent = resolveUiText("quality_filters_empty", DEFAULT_UI_TEXTS.quality_filters_empty);
+    qualityFiltersNode.appendChild(empty);
+    return;
+  }
+
+  for (const option of options) {
+    const name = normalizeQualityLabel(option?.name);
+    const tone = String(option?.tone || "na").trim() || "na";
+
+    const label = document.createElement("label");
+    label.className = `quality-chip quality-chip--${tone}`;
+
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = qualityFilterState.get(name) !== false;
+
+    input.addEventListener("change", async () => {
+      qualityFilterState.set(name, input.checked);
+      updateTableView();
+
+      try {
+        await upsertQualityFiltersOnServer([{ name, enabled: input.checked }]);
+      } catch (error) {
+        setStatus(error.message || "Failed to save quality filter.", true);
+      }
+    });
+
+    const text = document.createElement("span");
+    text.textContent = name;
+
+    label.appendChild(input);
+    label.appendChild(text);
+    qualityFiltersNode.appendChild(label);
+  }
+}
+
+function collectQualityOptionsFromReleases(releases) {
+  const optionsByName = new Map();
+
+  for (const release of releases || []) {
+    if (!release || release.error) {
+      continue;
+    }
+
+    const qualityInfo = resolveReleaseQualityInfo(release);
+    const name = normalizeQualityLabel(qualityInfo.label);
+    const currentHeight = Number.isFinite(qualityInfo.height) ? qualityInfo.height : Number.NEGATIVE_INFINITY;
+
+    if (!optionsByName.has(name)) {
+      optionsByName.set(name, {
+        name,
+        tone: qualityInfo.tone,
+        height: currentHeight
+      });
+      continue;
+    }
+
+    const existing = optionsByName.get(name);
+    const existingHeight = Number.isFinite(existing?.height) ? existing.height : Number.NEGATIVE_INFINITY;
+    if (currentHeight > existingHeight) {
+      existing.height = currentHeight;
+      existing.tone = qualityInfo.tone;
+    }
+  }
+
+  return Array.from(optionsByName.values()).sort(compareQualityOptions);
+}
+
+function registerQualityFiltersFromReleases(releases) {
+  availableQualityOptions = collectQualityOptionsFromReleases(releases);
+
+  const discovered = [];
+  for (const option of availableQualityOptions) {
+    const name = normalizeQualityLabel(option.name);
+    if (!qualityFilterState.has(name)) {
+      qualityFilterState.set(name, true);
+      discovered.push({ name, enabled: true });
+    }
+  }
+
+  renderQualityFilters();
+
+  if (discovered.length > 0) {
+    upsertQualityFiltersOnServer(discovered).catch(() => {});
   }
 }
 
@@ -950,10 +1516,31 @@ function registerCategoriesFromReleases(releases) {
 function updateTableView() {
   hidePosterPreview();
 
-  const sortedReleases = sortReleasesByDate(allReleases);
-  const visibleReleases = sortedReleases.filter((release) => {
+  const sortedReleases = sortReleasesByDate(allReleases, releaseDateSortOrder);
+  const categoryScopedReleases = sortedReleases.filter((release) => {
+    if (!release || release.error) {
+      return false;
+    }
+
     const categoryName = normalizeCategoryName(release?.category);
     return categoryState.get(categoryName) !== false;
+  });
+
+  availableQualityOptions = collectQualityOptionsFromReleases(categoryScopedReleases);
+  renderQualityFilters();
+
+  const visibleReleases = sortedReleases.filter((release) => {
+    if (release?.error) {
+      return true;
+    }
+
+    const categoryName = normalizeCategoryName(release?.category);
+    if (categoryState.get(categoryName) === false) {
+      return false;
+    }
+
+    const qualityName = normalizeQualityLabel(resolveReleaseQualityInfo(release).label);
+    return qualityFilterState.get(qualityName) !== false;
   });
 
   if (sortedReleases.length > 0 && visibleReleases.length === 0) {
@@ -980,10 +1567,12 @@ async function loadClientConfig() {
     Number.isFinite(hardMaxReleasesValue) && hardMaxReleasesValue > 0
       ? hardMaxReleasesValue
       : clientConfig.hardMaxReleases;
+  const directDownloadEnabled = Boolean(tracker.directDownloadEnabled);
 
   clientConfig.defaultSourceUrl = defaultSourceUrl;
   clientConfig.maxReleases = maxReleases;
   clientConfig.hardMaxReleases = hardMaxReleases;
+  clientConfig.directDownloadEnabled = directDownloadEnabled;
 
   sourceInput.placeholder = resolveUiText("source_placeholder", DEFAULT_UI_TEXTS.source_placeholder);
   maxReleasesInput.value = String(maxReleases);
@@ -1036,6 +1625,13 @@ async function loadSavedCategories() {
 
   mergeCategoriesIntoState(payload.categories || []);
   renderCategoryFilters();
+}
+
+async function loadSavedQualityFilters() {
+  const payload = await fetchJson("/api/quality-filters");
+
+  mergeQualityFiltersIntoState(payload.qualities || []);
+  renderQualityFilters();
 }
 
 async function loadSavedSearches() {
@@ -1162,6 +1758,12 @@ async function initializeAuthenticatedApp() {
   }
 
   try {
+    await loadSavedQualityFilters();
+  } catch (error) {
+    renderQualityFilters();
+  }
+
+  try {
     await loadSavedSearches();
   } catch (error) {
     renderSavedSearches();
@@ -1220,6 +1822,19 @@ filtersToggleButton.addEventListener("click", () => {
   }
 
   setFiltersExpanded(filtersPanel.hidden);
+});
+
+tableHeaderPublishedNode.addEventListener("click", () => {
+  toggleReleaseDateSortOrder();
+});
+
+tableHeaderPublishedNode.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") {
+    return;
+  }
+
+  event.preventDefault();
+  toggleReleaseDateSortOrder();
 });
 
 saveSearchButton.addEventListener("click", () => {
@@ -1304,6 +1919,7 @@ form.addEventListener("submit", async (event) => {
   setProgress(0, 0);
   summaryNode.textContent = "";
   allReleases = [];
+  registerQualityFiltersFromReleases([]);
   renderPlaceholder(resolveUiText("table_waiting", DEFAULT_UI_TEXTS.table_waiting));
 
   try {
@@ -1340,17 +1956,20 @@ form.addEventListener("submit", async (event) => {
       if (releases.length > 0) {
         allReleases = releases;
         registerCategoriesFromReleases(releases);
+        registerQualityFiltersFromReleases(releases);
         updateTableView();
       }
 
       if (job.status === "done" && releases.length === 0) {
         allReleases = [];
+        registerQualityFiltersFromReleases([]);
         updateTableView();
       }
     });
 
     allReleases = Array.isArray(finalJob.releases) ? finalJob.releases : [];
     registerCategoriesFromReleases(allReleases);
+    registerQualityFiltersFromReleases(allReleases);
     updateTableView();
 
     const parsed = allReleases.length;

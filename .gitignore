@@ -6,3 +6,4 @@ npm-debug.log*
 data/categories.json
 data/saved-searches.json
 data/releases-cache.json
+data/quality-filters.json

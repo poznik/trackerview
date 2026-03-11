@@ -28,7 +28,9 @@ const updateState = {
   lastError: null
 };
 const categoryStore = createCategoryStore(path.join(__dirname, "..", "data", "categories.json"));
+const qualityFilterStore = createCategoryStore(path.join(__dirname, "..", "data", "quality-filters.json"));
 const savedSearchStore = createSavedSearchStore(path.join(__dirname, "..", "data", "saved-searches.json"));
+const MAX_DOWNLOAD_FILE_NAME_LENGTH = 180;
 
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "..", "public")));
@@ -189,6 +191,166 @@ function isExistingFile(filePath) {
   } catch (error) {
     return false;
   }
+}
+
+function isExistingDirectory(directoryPath) {
+  try {
+    return fs.statSync(directoryPath).isDirectory();
+  } catch (error) {
+    return false;
+  }
+}
+
+function resolveDirectDownloadDir() {
+  return toAbsolutePath(config.tracker.directDownloadDir);
+}
+
+function isDirectDownloadAvailable() {
+  const directoryPath = resolveDirectDownloadDir();
+  return Boolean(directoryPath) && isExistingDirectory(directoryPath);
+}
+
+function resolveTrustedTrackerUrl(rawUrl) {
+  const baseUrl = parseSafeUrl(config.tracker.baseUrl);
+  if (!baseUrl) {
+    return "";
+  }
+
+  const value = String(rawUrl || "").trim();
+  if (!value) {
+    return "";
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(value, baseUrl);
+  } catch (error) {
+    return "";
+  }
+
+  if (!/^https?:$/i.test(parsed.protocol)) {
+    return "";
+  }
+
+  if (parsed.origin !== baseUrl.origin) {
+    return "";
+  }
+
+  return parsed.toString();
+}
+
+function unquoteHeaderValue(value) {
+  const text = String(value || "").trim();
+  if (text.startsWith("\"") && text.endsWith("\"") && text.length >= 2) {
+    return text.slice(1, -1);
+  }
+  return text;
+}
+
+function decodeRfc5987Value(value) {
+  try {
+    return decodeURIComponent(String(value || ""));
+  } catch (error) {
+    return String(value || "");
+  }
+}
+
+function extractFileNameFromContentDisposition(headerValue) {
+  const header = String(headerValue || "").trim();
+  if (!header) {
+    return "";
+  }
+
+  const utf8Match = header.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+  if (utf8Match) {
+    return decodeRfc5987Value(unquoteHeaderValue(utf8Match[1]));
+  }
+
+  const genericExtendedMatch = header.match(/filename\*\s*=\s*([^;]+)/i);
+  if (genericExtendedMatch) {
+    const raw = unquoteHeaderValue(genericExtendedMatch[1]);
+    const separatorIndex = raw.indexOf("''");
+    if (separatorIndex >= 0) {
+      return decodeRfc5987Value(raw.slice(separatorIndex + 2));
+    }
+    return decodeRfc5987Value(raw);
+  }
+
+  const basicMatch = header.match(/filename\s*=\s*([^;]+)/i);
+  if (basicMatch) {
+    return unquoteHeaderValue(basicMatch[1]);
+  }
+
+  return "";
+}
+
+function sanitizeFileName(rawValue) {
+  const cleaned = String(rawValue || "")
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^\.+/, "")
+    .replace(/\.+$/, "");
+
+  if (!cleaned) {
+    return "";
+  }
+
+  if (cleaned.length <= MAX_DOWNLOAD_FILE_NAME_LENGTH) {
+    return cleaned;
+  }
+
+  return cleaned.slice(0, MAX_DOWNLOAD_FILE_NAME_LENGTH).trim();
+}
+
+function ensureTorrentExtension(fileName) {
+  const normalized = String(fileName || "").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  if (/\.torrent$/i.test(normalized)) {
+    return normalized;
+  }
+
+  return `${normalized}.torrent`;
+}
+
+function buildDownloadFileName({ torrentUrl, title, contentDisposition }) {
+  const fromHeader = sanitizeFileName(extractFileNameFromContentDisposition(contentDisposition));
+  if (fromHeader) {
+    return ensureTorrentExtension(fromHeader);
+  }
+
+  const urlFileName = sanitizeFileName(path.basename(new URL(torrentUrl).pathname || ""));
+  if (urlFileName && !/\b(dl|download|file|torrent)\.php$/i.test(urlFileName)) {
+    return ensureTorrentExtension(urlFileName);
+  }
+
+  const fromTitle = sanitizeFileName(String(title || ""));
+  if (fromTitle) {
+    return ensureTorrentExtension(fromTitle);
+  }
+
+  return `release-${Date.now()}.torrent`;
+}
+
+function resolveUniqueDownloadPath(directoryPath, fileName) {
+  const normalizedName = sanitizeFileName(fileName) || `release-${Date.now()}.torrent`;
+  const ensuredName = ensureTorrentExtension(normalizedName);
+  const extension = path.extname(ensuredName);
+  const baseName = extension ? ensuredName.slice(0, -extension.length) : ensuredName;
+
+  for (let index = 0; index < 10_000; index += 1) {
+    const suffix = index === 0 ? "" : ` (${index})`;
+    const candidateName = `${baseName}${suffix}${extension}`;
+    const candidatePath = path.join(directoryPath, candidateName);
+    if (!fs.existsSync(candidatePath)) {
+      return candidatePath;
+    }
+  }
+
+  throw new Error("Unable to allocate unique file name for direct download.");
 }
 
 function resolveUpdateScriptPath() {
@@ -359,6 +521,7 @@ function createJobSnapshot(job) {
     processed: job.processed,
     releases: job.releases.filter(Boolean),
     categories: categoryStore.list(),
+    qualities: qualityFilterStore.list(),
     error: job.error || null,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt
@@ -547,6 +710,12 @@ app.get("/api/categories", (_, response) => {
   });
 });
 
+app.get("/api/quality-filters", (_, response) => {
+  response.json({
+    qualities: qualityFilterStore.list()
+  });
+});
+
 app.get("/api/saved-searches", (_, response) => {
   response.json({
     searches: savedSearchStore.list()
@@ -561,7 +730,8 @@ app.get("/api/client-config", (_, response) => {
     tracker: {
       defaultSourceUrl: resolveDefaultSourceUrl(),
       maxReleases: config.tracker.maxReleases,
-      hardMaxReleases: resolveHardMaxReleases()
+      hardMaxReleases: resolveHardMaxReleases(),
+      directDownloadEnabled: isDirectDownloadAvailable()
     }
   });
 });
@@ -601,6 +771,80 @@ app.post("/api/categories", (request, response) => {
     changed: result.changed,
     categories: result.categories
   });
+});
+
+app.post("/api/quality-filters", (request, response) => {
+  const qualities = Array.isArray(request.body?.qualities) ? request.body.qualities : null;
+  if (!qualities) {
+    return response.status(400).json({ error: "qualities must be an array." });
+  }
+
+  const result = qualityFilterStore.upsertMany(qualities, { defaultEnabled: true });
+  return response.json({
+    changed: result.changed,
+    qualities: result.categories
+  });
+});
+
+app.post("/api/releases/download-to-dir", async (request, response) => {
+  const downloadDirectory = resolveDirectDownloadDir();
+  if (!downloadDirectory) {
+    return response.status(400).json({
+      error: "TRACKER_DIRECT_DOWNLOAD_DIR is not configured."
+    });
+  }
+
+  if (!isExistingDirectory(downloadDirectory)) {
+    return response.status(400).json({
+      error: `Configured download directory does not exist or is not a directory: ${downloadDirectory}`
+    });
+  }
+
+  const torrentUrl = resolveTrustedTrackerUrl(request.body?.torrentUrl);
+  if (!torrentUrl) {
+    return response.status(400).json({
+      error: "torrentUrl must be a valid tracker URL on TRACKER_BASE_URL host."
+    });
+  }
+
+  const title = String(request.body?.title || "").trim();
+
+  try {
+    const client = await createLoggedClient();
+    const fileResponse = await client.request(torrentUrl);
+
+    if (!fileResponse.ok) {
+      return response.status(502).json({
+        error: `Failed to download file from tracker (HTTP ${fileResponse.status}).`
+      });
+    }
+
+    const contentType = String(fileResponse.contentType || "").toLowerCase();
+    if (contentType.includes("text/html")) {
+      return response.status(502).json({
+        error: "Tracker returned HTML instead of a torrent file."
+      });
+    }
+
+    const fileName = buildDownloadFileName({
+      torrentUrl,
+      title,
+      contentDisposition: fileResponse.contentDisposition
+    });
+    const targetPath = resolveUniqueDownloadPath(downloadDirectory, fileName);
+
+    await fs.promises.writeFile(targetPath, fileResponse.buffer);
+
+    return response.status(201).json({
+      fileName: path.basename(targetPath),
+      destinationPath: targetPath,
+      bytes: fileResponse.buffer.length
+    });
+  } catch (error) {
+    return response.status(500).json({
+      error: error.message || "Unexpected error while downloading file to server."
+    });
+  }
 });
 
 app.post("/api/release", async (request, response) => {

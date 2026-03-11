@@ -24,5 +24,12 @@
   "summary_found_parsed_template": "Найдено {found} ссылок. Скачано {parsed} релизов.",
   "signed_in_as_template": "Вошел как {username}",
   "update_button": "Обновить",
-  "logout_button": "Выйти"
+  "logout_button": "Выйти",
+  "quality_filters_title": "Фильтры качества",
+  "quality_filters_empty": "Фильтры качества появятся после загрузки релизов.",
+  "table_no_matches": "Нет релизов, подходящих под выбранные фильтры.",
+  "download_to_server": "Сохранить на сервер",
+  "download_to_server_done_template": "Сохранено на сервер: {fileName}",
+  "download_to_server_failed": "Не удалось сохранить файл в папку на сервере.",
+  "download_badge_done": "Скачано"
 }
