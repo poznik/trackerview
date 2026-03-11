@@ -1177,12 +1177,14 @@ function createSizeCell(release, row) {
   cell.className = "size-cell";
   const content = document.createElement("div");
   content.className = "size-cell-content";
+  const sizeLine = document.createElement("div");
+  sizeLine.className = "size-line";
+  const metaLine = document.createElement("div");
+  metaLine.className = "size-meta-line";
   const sizeText = String(release?.size || "").trim() || "-";
   const torrentUrl = String(release?.torrentUrl || "").trim();
   const qualityInfo = resolveReleaseQualityInfo(release);
   const qualityBadge = createQualityBadge(qualityInfo);
-
-  content.appendChild(qualityBadge);
 
   if (torrentUrl) {
     const link = document.createElement("a");
@@ -1195,22 +1197,25 @@ function createSizeCell(release, row) {
       markReleaseAsDownloaded(release);
       applyDownloadedRowState(row, release);
     });
-    content.appendChild(link);
-    const serverDownloadControl = createServerDownloadControl(release, () => {
-      markReleaseAsDownloaded(release);
-      applyDownloadedRowState(row, release);
-    });
-    if (serverDownloadControl) {
-      content.appendChild(serverDownloadControl);
-    }
-    cell.appendChild(content);
-    return cell;
+    sizeLine.appendChild(link);
+  } else {
+    const sizeValue = document.createElement("span");
+    sizeValue.className = "size-value";
+    sizeValue.textContent = sizeText;
+    sizeLine.appendChild(sizeValue);
   }
 
-  const sizeValue = document.createElement("span");
-  sizeValue.className = "size-value";
-  sizeValue.textContent = sizeText;
-  content.appendChild(sizeValue);
+  metaLine.appendChild(qualityBadge);
+  const serverDownloadControl = createServerDownloadControl(release, () => {
+    markReleaseAsDownloaded(release);
+    applyDownloadedRowState(row, release);
+  });
+  if (serverDownloadControl) {
+    metaLine.appendChild(serverDownloadControl);
+  }
+
+  content.appendChild(sizeLine);
+  content.appendChild(metaLine);
   cell.appendChild(content);
   return cell;
 }

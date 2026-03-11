@@ -614,19 +614,19 @@ tbody td:nth-child(4) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   border: 1px solid rgba(30, 42, 39, 0.24);
-  border-radius: 8px;
+  border-radius: 10px;
   background: rgba(255, 255, 255, 0.92);
   color: #2a4f47;
   cursor: pointer;
 }
 
 .server-download-btn svg {
-  width: 17px;
-  height: 17px;
+  width: 18px;
+  height: 18px;
   fill: currentColor;
 }
 
@@ -668,22 +668,34 @@ tbody td:nth-child(4) {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 6px;
+  gap: 8px;
+}
+
+.size-line {
+  display: block;
+}
+
+.size-meta-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .size-value {
   color: var(--ink);
+  font-weight: 600;
 }
 
 .size-cell .quality-badge {
-  display: block;
+  display: inline-flex;
+  align-items: center;
   margin: 0;
-  padding: 3px 9px;
+  padding: 4px 12px;
   border-radius: 999px;
-  font-size: 0.72rem;
+  font-size: 1.08rem;
   font-weight: 700;
   letter-spacing: 0.05em;
-  line-height: 1.2;
+  line-height: 1.1;
   text-transform: uppercase;
 }
 
