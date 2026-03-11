@@ -733,6 +733,26 @@ app.get("/api/releases/job/:jobId", (request, response) => {
   return response.json(createJobSnapshot(job));
 });
 
+app.get("/icons8-download-cute-color-16.png", (_, response) => {
+  response.sendFile(path.join(__dirname, "..", "icons8-download-cute-color-16.png"));
+});
+
+app.get("/icons8-download-cute-color-32.png", (_, response) => {
+  response.sendFile(path.join(__dirname, "..", "icons8-download-cute-color-32.png"));
+});
+
+app.get("/icons8-download-cute-color-96.png", (_, response) => {
+  response.sendFile(path.join(__dirname, "..", "icons8-download-cute-color-96.png"));
+});
+
+app.get("/favico.png", (_, response) => {
+  response.sendFile(path.join(__dirname, "..", "icons8-download-cute-color-32.png"));
+});
+
+app.get("/favicon.ico", (_, response) => {
+  response.sendFile(path.join(__dirname, "..", "icons8-download-cute-color-32.png"));
+});
+
 app.get("*", (_, response) => {
   response.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });

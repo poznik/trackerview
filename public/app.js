@@ -6,6 +6,9 @@ const authPasswordInput = document.getElementById("auth-password");
 const authSubmitButton = document.getElementById("auth-submit");
 const authStatusNode = document.getElementById("auth-status");
 const authUserNode = document.getElementById("auth-user");
+const appEyebrowNode = document.getElementById("app-eyebrow");
+const appTitleNode = document.getElementById("app-title");
+const appSubtitleNode = document.getElementById("app-subtitle");
 const appVersionNode = document.getElementById("app-version");
 const updateButton = document.getElementById("update-btn");
 const updateStatusNode = document.getElementById("update-status");
@@ -32,6 +35,12 @@ const saveSearchSubmitButton = document.getElementById("save-search-submit");
 
 const JOB_POLL_INTERVAL_MS = 800;
 const DEFAULT_SOURCE_PLACEHOLDER = "URL or text for search";
+const DEFAULT_UI_TEXTS = {
+  eyebrow: "Tracker Dashboard",
+  title: "TrackerView",
+  subtitle:
+    "Paste a tracker page URL or type search text to build a clean release table with poster, description, publication date and release size."
+};
 const hoverPanel = document.createElement("div");
 const hoverPanelImage = document.createElement("img");
 const clientConfig = {
@@ -82,6 +91,16 @@ document.body.appendChild(hoverPanel);
 function setAuthStatus(message, isError = false) {
   authStatusNode.textContent = String(message || "");
   authStatusNode.classList.toggle("error", Boolean(isError));
+}
+
+function setHeaderTexts(texts = {}) {
+  const eyebrow = String(texts.eyebrow || "").trim() || DEFAULT_UI_TEXTS.eyebrow;
+  const title = String(texts.title || "").trim() || DEFAULT_UI_TEXTS.title;
+  const subtitle = String(texts.subtitle || "").trim() || DEFAULT_UI_TEXTS.subtitle;
+
+  appEyebrowNode.textContent = eyebrow;
+  appTitleNode.textContent = title;
+  appSubtitleNode.textContent = subtitle;
 }
 
 function setAppVersion(version) {
@@ -208,6 +227,18 @@ async function logoutCurrentSession() {
 async function loadPublicAppVersion() {
   const payload = await fetchJson("/api/version");
   setAppVersion(payload?.version);
+}
+
+async function loadUiTexts() {
+  const response = await fetch("/ui-texts.json", {
+    cache: "no-store"
+  });
+  if (!response.ok) {
+    return;
+  }
+
+  const payload = await response.json();
+  setHeaderTexts(payload || {});
 }
 
 async function loadUpdateControlStatus() {
@@ -1297,6 +1328,14 @@ logoutButton.addEventListener("click", async () => {
 });
 
 (async () => {
+  setHeaderTexts(DEFAULT_UI_TEXTS);
+
+  try {
+    await loadUiTexts();
+  } catch (error) {
+    // Keep default UI text if ui-texts.json is unavailable.
+  }
+
   try {
     await loadPublicAppVersion();
   } catch (error) {
