@@ -31,9 +31,7 @@ function createSavedSearchStore(filePath) {
   }
 
   function list() {
-    return Array.from(searchesByUrl.values())
-      .map((entry) => ({ ...entry }))
-      .sort((left, right) => right.updatedAt - left.updatedAt || left.name.localeCompare(right.name));
+    return Array.from(searchesByUrl.values()).map((entry) => ({ ...entry }));
   }
 
   function saveToDisk() {

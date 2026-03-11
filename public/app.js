@@ -489,12 +489,23 @@ function findSavedSearchByUrl(url) {
   return null;
 }
 
-function renderSavedSearches() {
+function getFirstSavedSearchUrl() {
+  const firstSavedEntry = Array.isArray(savedSearches)
+    ? savedSearches.find((entry) => normalizeSearchUrl(entry?.url))
+    : null;
+
+  return normalizeSearchUrl(firstSavedEntry?.url);
+}
+
+function renderSavedSearches(selectedUrl = "") {
   savedSearchesSelect.innerHTML = "";
+  const normalizedSelectedUrl = normalizeSearchUrl(selectedUrl);
+  let hasSelectedOption = false;
 
   const placeholderOption = document.createElement("option");
   placeholderOption.value = "";
   placeholderOption.textContent = resolveUiText("saved_searches", DEFAULT_UI_TEXTS.saved_searches);
+  placeholderOption.selected = !normalizedSelectedUrl;
   savedSearchesSelect.appendChild(placeholderOption);
 
   for (const entry of savedSearches) {
@@ -507,8 +518,30 @@ function renderSavedSearches() {
     option.value = normalizedUrl;
     option.textContent = String(entry?.name || normalizedUrl);
     option.title = normalizedUrl;
+    if (!hasSelectedOption && normalizedSelectedUrl && normalizedUrl === normalizedSelectedUrl) {
+      option.selected = true;
+      hasSelectedOption = true;
+      placeholderOption.selected = false;
+    }
     savedSearchesSelect.appendChild(option);
   }
+
+  if (!hasSelectedOption && normalizedSelectedUrl) {
+    savedSearchesSelect.value = "";
+  }
+}
+
+function applyInitialSavedSearchSelection() {
+  const firstSavedUrl = getFirstSavedSearchUrl();
+  renderSavedSearches(firstSavedUrl);
+
+  if (!firstSavedUrl) {
+    savedSearchesSelect.value = "";
+    return;
+  }
+
+  savedSearchesSelect.value = firstSavedUrl;
+  sourceInput.value = firstSavedUrl;
 }
 
 function setSaveSearchButtonVisible(visible) {
@@ -1644,7 +1677,7 @@ async function loadSavedSearches() {
   const payload = await fetchJson("/api/saved-searches");
 
   savedSearches = Array.isArray(payload.searches) ? payload.searches : [];
-  renderSavedSearches();
+  applyInitialSavedSearchSelection();
 }
 
 async function upsertSavedSearchOnServer(name, url) {
