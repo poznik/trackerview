@@ -1130,6 +1130,27 @@ authForm.addEventListener("submit", async (event) => {
   }
 });
 
+function submitAuthFormFromEnter(event) {
+  if (event.key !== "Enter" || event.isComposing) {
+    return;
+  }
+
+  event.preventDefault();
+  if (authSubmitButton.disabled) {
+    return;
+  }
+
+  if (typeof authForm.requestSubmit === "function") {
+    authForm.requestSubmit(authSubmitButton);
+    return;
+  }
+
+  authSubmitButton.click();
+}
+
+authUsernameInput.addEventListener("keydown", submitAuthFormFromEnter);
+authPasswordInput.addEventListener("keydown", submitAuthFormFromEnter);
+
 logoutButton.addEventListener("click", async () => {
   logoutButton.disabled = true;
   try {
