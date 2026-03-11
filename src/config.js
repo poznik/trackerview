@@ -11,6 +11,8 @@ const config = {
   },
   tracker: {
     baseUrl: process.env.TRACKER_BASE_URL || "https://tracker.example/forum",
+    defaultSourceUrl: process.env.TRACKER_DEFAULT_SOURCE_URL || "",
+    textSearchPath: process.env.TRACKER_TEXT_SEARCH_PATH || "tracker.php",
     username: process.env.TRACKER_USERNAME || "",
     password: process.env.TRACKER_PASSWORD || "",
     maxReleases: toNumber(process.env.TRACKER_MAX_RELEASES, 80),

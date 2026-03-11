@@ -1,5 +1,3 @@
-const DEFAULT_SOURCE_URL = "https://tracker.example/forum/viewtopic.php?t=3268103";
-
 const form = document.getElementById("load-form");
 const sourceInput = document.getElementById("source-url");
 const savedSearchesSelect = document.getElementById("saved-searches-select");
@@ -21,9 +19,14 @@ const saveSearchCancelButton = document.getElementById("save-search-cancel");
 const saveSearchSubmitButton = document.getElementById("save-search-submit");
 
 const JOB_POLL_INTERVAL_MS = 800;
-const TRACKER_TEXT_SEARCH_URL = "https://tracker.example/forum/tracker.php";
+const DEFAULT_SOURCE_PLACEHOLDER = "URL or text for search";
 const hoverPanel = document.createElement("div");
 const hoverPanelImage = document.createElement("img");
+const clientConfig = {
+  defaultSourceUrl: "",
+  maxReleases: 80,
+  hardMaxReleases: 700
+};
 
 const monthIndexByName = {
   янв: 0,
@@ -85,28 +88,14 @@ function normalizeSearchUrl(value) {
   }
 }
 
-function buildTrackerSearchUrlFromText(rawQuery) {
-  const queryText = String(rawQuery || "").replace(/\s+/g, " ").trim();
-  if (!queryText) {
-    return "";
-  }
-
-  const url = new URL(TRACKER_TEXT_SEARCH_URL);
-  url.searchParams.set("o", "1");
-  url.searchParams.set("s", "2");
-  url.searchParams.set("tm", "-1");
-  url.searchParams.set("nm", queryText);
-  url.searchParams.set("f", "-1");
-  return url.toString();
-}
-
 function resolveSourceRequest(rawValue) {
   const entered = String(rawValue || "").trim();
   if (!entered) {
     return {
       mode: "default",
       rawInput: "",
-      pageUrl: DEFAULT_SOURCE_URL
+      pageUrl: clientConfig.defaultSourceUrl,
+      queryText: ""
     };
   }
 
@@ -115,14 +104,16 @@ function resolveSourceRequest(rawValue) {
     return {
       mode: "url",
       rawInput: entered,
-      pageUrl: normalizedUrl
+      pageUrl: normalizedUrl,
+      queryText: ""
     };
   }
 
   return {
     mode: "text",
     rawInput: entered,
-    pageUrl: buildTrackerSearchUrlFromText(entered)
+    pageUrl: "",
+    queryText: entered
   };
 }
 
@@ -656,13 +647,46 @@ function updateTableView() {
   renderReleases(visibleReleases);
 }
 
-async function startParseJob(pageUrl, maxReleases) {
+async function loadClientConfig() {
+  const response = await fetch("/api/client-config");
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.error || `Failed to load client config (HTTP ${response.status}).`);
+  }
+
+  const tracker = payload?.tracker || {};
+  const defaultSourceUrl = normalizeSearchUrl(tracker.defaultSourceUrl);
+  const maxReleasesValue = Number.parseInt(String(tracker.maxReleases || ""), 10);
+  const maxReleases =
+    Number.isFinite(maxReleasesValue) && maxReleasesValue > 0
+      ? maxReleasesValue
+      : clientConfig.maxReleases;
+  const hardMaxReleasesValue = Number.parseInt(String(tracker.hardMaxReleases || ""), 10);
+  const hardMaxReleases =
+    Number.isFinite(hardMaxReleasesValue) && hardMaxReleasesValue > 0
+      ? hardMaxReleasesValue
+      : clientConfig.hardMaxReleases;
+
+  clientConfig.defaultSourceUrl = defaultSourceUrl;
+  clientConfig.maxReleases = maxReleases;
+  clientConfig.hardMaxReleases = hardMaxReleases;
+
+  sourceInput.placeholder = DEFAULT_SOURCE_PLACEHOLDER;
+  maxReleasesInput.value = String(maxReleases);
+  maxReleasesInput.max = String(hardMaxReleases);
+}
+
+async function startParseJob(sourceRequest, maxReleases) {
   const response = await fetch("/api/releases/job", {
     method: "POST",
     headers: {
       "content-type": "application/json"
     },
-    body: JSON.stringify({ pageUrl, maxReleases })
+    body: JSON.stringify({
+      pageUrl: sourceRequest.pageUrl,
+      queryText: sourceRequest.queryText,
+      maxReleases
+    })
   });
 
   const payload = await response.json();
@@ -862,8 +886,13 @@ form.addEventListener("submit", async (event) => {
       ? maxReleasesValue
       : undefined;
 
-  if (!sourceRequest.rawInput) {
-    sourceInput.value = DEFAULT_SOURCE_URL;
+  if (!pageUrl && !sourceRequest.queryText) {
+    setStatus("Enter source URL or text query.", true);
+    return;
+  }
+
+  if (!sourceRequest.rawInput && pageUrl) {
+    sourceInput.value = pageUrl;
   }
 
   loadButton.disabled = true;
@@ -876,7 +905,7 @@ form.addEventListener("submit", async (event) => {
   renderPlaceholder("Waiting for parsed releases...");
 
   try {
-    const jobId = await startParseJob(pageUrl, maxReleases);
+    const jobId = await startParseJob(sourceRequest, maxReleases);
 
     const finalJob = await pollJobUntilDone(jobId, (job) => {
       const releases = Array.isArray(job.releases) ? job.releases : [];
@@ -918,7 +947,8 @@ form.addEventListener("submit", async (event) => {
     summaryNode.textContent = `Found ${finalJob.totalFound} links. Parsed ${parsed} releases.`;
     setProgress(finalJob.processed, finalJob.totalFound);
     setStatus("Done");
-    lastSuccessfulSearchUrl = normalizeSearchUrl(pageUrl) || pageUrl;
+    const resolvedSourceUrl = normalizeSearchUrl(finalJob.sourceUrl) || normalizeSearchUrl(pageUrl) || pageUrl;
+    lastSuccessfulSearchUrl = resolvedSourceUrl;
     if (lastSuccessfulSearchUrl) {
       if (sourceRequest.mode === "text") {
         sourceInput.value = sourceRequest.rawInput;
@@ -942,7 +972,18 @@ form.addEventListener("submit", async (event) => {
 });
 
 (async () => {
+  loadButton.disabled = true;
   setProgress(0, 0);
+  try {
+    await loadClientConfig();
+  } catch (error) {
+    sourceInput.placeholder = DEFAULT_SOURCE_PLACEHOLDER;
+    maxReleasesInput.max = String(clientConfig.hardMaxReleases);
+    setStatus(error.message || "Failed to load client config.", true);
+  } finally {
+    loadButton.disabled = false;
+  }
+
   try {
     await loadSavedCategories();
   } catch (error) {

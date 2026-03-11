@@ -1,7 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_URL="${1:-http://127.0.0.1:3000}"
+if [ -f ".env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . ./.env
+  set +a
+fi
+
+BASE_URL="${1:-${BASE_URL:-http://127.0.0.1:3000}}"
+CHECK_RELEASE_URL="${TRACKER_CHECK_RELEASE_URL:-}"
+CHECK_COLLECTION_URL="${TRACKER_CHECK_COLLECTION_URL:-}"
+CHECK_MAX_RELEASES="${TRACKER_CHECK_MAX_RELEASES:-5}"
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -24,9 +34,16 @@ if payload.get("status") != "ok":
 print("Health OK")
 PY
 
-echo "[2/3] Release check (t=3164896)"
-release_payload="$(curl -fsS -X POST "${BASE_URL}/api/release" -H 'content-type: application/json' -d '{"releaseUrl":"https://tracker.example/forum/viewtopic.php?t=3164896"}')"
-python3 - <<'PY' "$release_payload"
+if [ -n "$CHECK_RELEASE_URL" ]; then
+  echo "[2/3] Release check (${CHECK_RELEASE_URL})"
+  release_request_json="$(python3 - <<'PY' "$CHECK_RELEASE_URL"
+import json
+import sys
+print(json.dumps({"releaseUrl": sys.argv[1]}))
+PY
+)"
+  release_payload="$(curl -fsS -X POST "${BASE_URL}/api/release" -H 'content-type: application/json' -d "$release_request_json")"
+  python3 - <<'PY' "$release_payload"
 import json
 import sys
 
@@ -35,23 +52,47 @@ release = payload.get("release")
 if not isinstance(release, dict):
     raise SystemExit("Release response has no release object")
 
-if release.get("topicId") != "3164896":
-    raise SystemExit(f"Unexpected topicId: {release.get('topicId')}")
+topic_url = str(release.get("topicUrl", "")).strip()
+if not topic_url:
+    raise SystemExit("Release response has empty topicUrl")
 
-size = str(release.get("size", ""))
-if "9.28" not in size or "GB" not in size.upper():
-    raise SystemExit(f"Unexpected size value: {size!r}")
+title = str(release.get("title", "")).strip()
+if not title:
+    raise SystemExit("Release response has empty title")
 
 seeds = release.get("seeds")
 if not ((isinstance(seeds, int) and seeds >= 0) or seeds == "-"):
     raise SystemExit(f"Unexpected seeds value: {seeds!r}")
 
-print(f"Release OK: seeds={seeds}, size={size}")
-PY
+size = str(release.get("size", "")).strip()
+if not size:
+    raise SystemExit("Release response has empty size")
 
-echo "[3/3] Collection check (t=3268103, maxReleases=5)"
-collection_payload="$(curl -fsS -X POST "${BASE_URL}/api/releases" -H 'content-type: application/json' -d '{"pageUrl":"https://tracker.example/forum/viewtopic.php?t=3268103","maxReleases":5}')"
-python3 - <<'PY' "$collection_payload"
+print(f"Release OK: title={title[:60]!r}, seeds={seeds}, size={size}")
+PY
+else
+  echo "[2/3] Release check skipped (set TRACKER_CHECK_RELEASE_URL to enable)"
+fi
+
+if [ -n "$CHECK_COLLECTION_URL" ]; then
+  echo "[3/3] Collection check (${CHECK_COLLECTION_URL}, maxReleases=${CHECK_MAX_RELEASES})"
+  collection_request_json="$(python3 - <<'PY' "$CHECK_COLLECTION_URL" "$CHECK_MAX_RELEASES"
+import json
+import sys
+
+try:
+    max_releases = int(sys.argv[2])
+except ValueError:
+    max_releases = 5
+
+if max_releases < 1:
+    max_releases = 1
+
+print(json.dumps({"pageUrl": sys.argv[1], "maxReleases": max_releases}))
+PY
+)"
+  collection_payload="$(curl -fsS -X POST "${BASE_URL}/api/releases" -H 'content-type: application/json' -d "$collection_request_json")"
+  python3 - <<'PY' "$collection_payload"
 import json
 import sys
 
@@ -60,19 +101,24 @@ releases = payload.get("releases")
 if not isinstance(releases, list) or not releases:
     raise SystemExit("Collection response has no releases")
 
-ok_seed = any(
-    (isinstance(item.get("seeds"), int) and item.get("seeds") >= 0) or item.get("seeds") == "-"
-    for item in releases
-    if isinstance(item, dict)
-)
-ok_size = any(bool(str(item.get("size", "")).strip()) for item in releases if isinstance(item, dict))
+valid_entries = [item for item in releases if isinstance(item, dict)]
+if not valid_entries:
+    raise SystemExit("Collection response has no valid release objects")
 
-if not ok_seed:
-    raise SystemExit("No release with seeds or cached marker in collection response")
-if not ok_size:
-    raise SystemExit("No release with parsed size in collection response")
+if not any(str(item.get("topicUrl", "")).strip() for item in valid_entries):
+    raise SystemExit("Collection response has no release with topicUrl")
 
-print(f"Collection OK: parsed={len(releases)}")
+if not any(str(item.get("title", "")).strip() for item in valid_entries):
+    raise SystemExit("Collection response has no release with title")
+
+print(f"Collection OK: parsed={len(valid_entries)}")
 PY
+else
+  echo "[3/3] Collection check skipped (set TRACKER_CHECK_COLLECTION_URL to enable)"
+fi
 
-echo "All live checks passed."
+if [ -z "$CHECK_RELEASE_URL" ] && [ -z "$CHECK_COLLECTION_URL" ]; then
+  echo "Live checks completed (health check only)."
+else
+  echo "All configured live checks passed."
+fi

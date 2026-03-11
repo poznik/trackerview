@@ -13,12 +13,17 @@ Settings are loaded from environment variables (`.env` supported):
 
 - `PORT` (default `3000`)
 - `TRACKER_BASE_URL` (default `https://tracker.example/forum`)
+- `TRACKER_DEFAULT_SOURCE_URL` (optional fallback source URL when form input is empty; if omitted, `TRACKER_BASE_URL` is used)
+- `TRACKER_TEXT_SEARCH_PATH` (default `tracker.php`, resolved relative to `TRACKER_BASE_URL`)
 - `TRACKER_USERNAME` (required)
 - `TRACKER_PASSWORD` (required)
 - `TRACKER_MAX_RELEASES` (default `80`)
 - `TRACKER_HARD_MAX_RELEASES` (default `700`, upper bound for request `maxReleases`)
 - `TRACKER_CONCURRENCY` (default `4`)
 - `TRACKER_REQUEST_TIMEOUT_MS` (default `25000`)
+- `TRACKER_CHECK_RELEASE_URL` (optional live-check URL for `npm run check:live`)
+- `TRACKER_CHECK_COLLECTION_URL` (optional live-check URL for `npm run check:live`)
+- `TRACKER_CHECK_MAX_RELEASES` (optional live-check limit, default `5`)
 
 Create local config from sample:
 
@@ -89,7 +94,7 @@ npm run dev:battle
 ```bash
 curl -s -X POST 'http://localhost:3000/api/releases' \
   -H 'content-type: application/json' \
-  -d '{"pageUrl":"https://tracker.example/forum/viewtopic.php?t=3268103","maxReleases":120}'
+  -d '{"pageUrl":"https://tracker.example/forum/viewtopic.php?t=12345","maxReleases":120}'
 ```
 
 ### Parse single release page
@@ -97,7 +102,7 @@ curl -s -X POST 'http://localhost:3000/api/releases' \
 ```bash
 curl -s -X POST 'http://localhost:3000/api/release' \
   -H 'content-type: application/json' \
-  -d '{"releaseUrl":"https://tracker.example/forum/viewtopic.php?t=3164896"}'
+  -d '{"releaseUrl":"https://tracker.example/forum/viewtopic.php?t=12345"}'
 ```
 
 ## Notes
@@ -105,3 +110,4 @@ curl -s -X POST 'http://localhost:3000/api/release' \
 - The app performs tracker login before parsing each request.
 - Seeds and release size are available only when login succeeds.
 - Source pages in `windows-1251` are decoded automatically.
+- Text query input is converted to tracker search URL on the server (`TRACKER_BASE_URL` + `TRACKER_TEXT_SEARCH_PATH`).

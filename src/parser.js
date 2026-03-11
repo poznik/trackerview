@@ -477,7 +477,7 @@ function extractBestPoster($, firstPost) {
     if (!/thumb/i.test(url)) {
       score += 2;
     }
-    if (/static\.tracker\.net\/pic\//i.test(url) || /release_month/i.test(url)) {
+    if (/\/pic\/(?:smilies|icons?)\//i.test(url) || /release_month/i.test(url)) {
       score -= 20;
     }
 

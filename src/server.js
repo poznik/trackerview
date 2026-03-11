@@ -25,6 +25,98 @@ function parseSafeUrl(url) {
   }
 }
 
+function normalizeUrl(url) {
+  const parsed = parseSafeUrl(String(url || "").trim());
+  if (!parsed) {
+    return "";
+  }
+
+  parsed.hash = "";
+  return parsed.toString();
+}
+
+function normalizeQueryText(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function resolveHardMaxReleases() {
+  const parsed = Number.parseInt(String(config.tracker.hardMaxReleases || ""), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 700;
+}
+
+function resolveDefaultSourceUrl() {
+  const explicitDefault = normalizeUrl(config.tracker.defaultSourceUrl);
+  if (explicitDefault) {
+    return explicitDefault;
+  }
+
+  return normalizeUrl(config.tracker.baseUrl);
+}
+
+function buildTrackerSearchUrlFromText(rawQuery) {
+  const queryText = normalizeQueryText(rawQuery);
+  if (!queryText) {
+    return "";
+  }
+
+  let baseUrl;
+  try {
+    baseUrl = new URL(config.tracker.baseUrl);
+  } catch (error) {
+    return "";
+  }
+
+  const rawPath = String(config.tracker.textSearchPath || "").trim() || "tracker.php";
+  const baseWithTrailingSlash = baseUrl.toString().replace(/\/?$/, "/");
+  const pathOrUrl = /^https?:\/\//i.test(rawPath)
+    ? rawPath
+    : rawPath.startsWith("/")
+      ? rawPath
+      : `./${rawPath}`;
+
+  let searchUrl;
+  try {
+    searchUrl = new URL(pathOrUrl, baseWithTrailingSlash);
+  } catch (error) {
+    return "";
+  }
+
+  searchUrl.hash = "";
+  searchUrl.searchParams.set("o", "1");
+  searchUrl.searchParams.set("s", "2");
+  searchUrl.searchParams.set("tm", "-1");
+  searchUrl.searchParams.set("nm", queryText);
+  searchUrl.searchParams.set("f", "-1");
+  return searchUrl.toString();
+}
+
+function resolveSourcePageUrl(body) {
+  const pageUrl = normalizeUrl(body?.pageUrl);
+  if (pageUrl) {
+    return { pageUrl, mode: "url" };
+  }
+
+  const queryText = normalizeQueryText(body?.queryText);
+  if (queryText) {
+    const searchUrl = buildTrackerSearchUrlFromText(queryText);
+    if (searchUrl) {
+      return { pageUrl: searchUrl, mode: "text" };
+    }
+    return {
+      error: "Unable to build text search URL. Check TRACKER_BASE_URL and TRACKER_TEXT_SEARCH_PATH."
+    };
+  }
+
+  const defaultSourceUrl = resolveDefaultSourceUrl();
+  if (defaultSourceUrl) {
+    return { pageUrl: defaultSourceUrl, mode: "default" };
+  }
+
+  return {
+    error: "Provide pageUrl or queryText, or configure TRACKER_BASE_URL / TRACKER_DEFAULT_SOURCE_URL."
+  };
+}
+
 async function createLoggedClient() {
   if (!config.tracker.username || !config.tracker.password) {
     throw new Error("Missing tracker credentials. Set TRACKER_USERNAME and TRACKER_PASSWORD.");
@@ -39,7 +131,7 @@ function resolveMaxReleases(rawValue) {
   const parsedValue = Number.parseInt(String(rawValue || ""), 10);
   const requested =
     Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : config.tracker.maxReleases;
-  const hardMax = Math.max(1, Number.parseInt(String(config.tracker.hardMaxReleases || ""), 10) || 700);
+  const hardMax = resolveHardMaxReleases();
   return Math.min(requested, hardMax);
 }
 
@@ -99,6 +191,16 @@ app.get("/api/categories", (_, response) => {
 app.get("/api/saved-searches", (_, response) => {
   response.json({
     searches: savedSearchStore.list()
+  });
+});
+
+app.get("/api/client-config", (_, response) => {
+  response.json({
+    tracker: {
+      defaultSourceUrl: resolveDefaultSourceUrl(),
+      maxReleases: config.tracker.maxReleases,
+      hardMaxReleases: resolveHardMaxReleases()
+    }
   });
 });
 
@@ -167,13 +269,13 @@ app.post("/api/release", async (request, response) => {
 });
 
 app.post("/api/releases", async (request, response) => {
-  const pageUrl = String(request.body?.pageUrl || "").trim();
-  const parsedUrl = parseSafeUrl(pageUrl);
-  const maxReleases = resolveMaxReleases(request.body?.maxReleases);
-
-  if (!parsedUrl) {
-    return response.status(400).json({ error: "pageUrl must be a valid URL." });
+  const source = resolveSourcePageUrl(request.body || {});
+  if (source.error) {
+    return response.status(400).json({ error: source.error });
   }
+
+  const pageUrl = source.pageUrl;
+  const maxReleases = resolveMaxReleases(request.body?.maxReleases);
 
   try {
     const client = await createLoggedClient();
@@ -194,13 +296,13 @@ app.post("/api/releases", async (request, response) => {
 app.post("/api/releases/job", async (request, response) => {
   cleanupParseJobs();
 
-  const pageUrl = String(request.body?.pageUrl || "").trim();
-  const parsedUrl = parseSafeUrl(pageUrl);
-  const maxReleases = resolveMaxReleases(request.body?.maxReleases);
-
-  if (!parsedUrl) {
-    return response.status(400).json({ error: "pageUrl must be a valid URL." });
+  const source = resolveSourcePageUrl(request.body || {});
+  if (source.error) {
+    return response.status(400).json({ error: source.error });
   }
+
+  const pageUrl = source.pageUrl;
+  const maxReleases = resolveMaxReleases(request.body?.maxReleases);
 
   const jobId = crypto.randomUUID();
   const now = Date.now();
