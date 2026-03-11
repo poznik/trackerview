@@ -4,6 +4,8 @@ const authForm = document.getElementById("auth-form");
 const authUsernameInput = document.getElementById("auth-username");
 const authPasswordInput = document.getElementById("auth-password");
 const authSubmitButton = document.getElementById("auth-submit");
+const authTitleNode = document.getElementById("auth-title");
+const authSubtitleNode = document.getElementById("auth-subtitle");
 const authStatusNode = document.getElementById("auth-status");
 const authUserNode = document.getElementById("auth-user");
 const appEyebrowNode = document.getElementById("app-eyebrow");
@@ -14,8 +16,10 @@ const updateButton = document.getElementById("update-btn");
 const updateStatusNode = document.getElementById("update-status");
 const logoutButton = document.getElementById("logout-btn");
 const form = document.getElementById("load-form");
+const sourceLabelNode = document.getElementById("source-label");
 const sourceInput = document.getElementById("source-url");
 const savedSearchesSelect = document.getElementById("saved-searches-select");
+const savedSearchesPlaceholderOption = document.getElementById("saved-searches-placeholder-option");
 const maxReleasesInput = document.getElementById("max-releases");
 const loadButton = document.getElementById("load-btn");
 const saveSearchButton = document.getElementById("save-search-btn");
@@ -26,6 +30,11 @@ const summaryNode = document.getElementById("summary");
 const progressNode = document.getElementById("progress-counter");
 const categoryFiltersNode = document.getElementById("category-filters");
 const tableBody = document.getElementById("releases-body");
+const tableHeaderPosterNode = document.getElementById("table-header-poster");
+const tableHeaderDescriptionNode = document.getElementById("table-header-description");
+const tableHeaderPublishedNode = document.getElementById("table-header-published");
+const tableHeaderSizeNode = document.getElementById("table-header-size");
+const tablePlaceholderCell = document.getElementById("table-placeholder-cell");
 const saveSearchDialog = document.getElementById("save-search-dialog");
 const saveSearchForm = document.getElementById("save-search-form");
 const saveSearchNameInput = document.getElementById("save-search-name");
@@ -34,13 +43,56 @@ const saveSearchCancelButton = document.getElementById("save-search-cancel");
 const saveSearchSubmitButton = document.getElementById("save-search-submit");
 
 const JOB_POLL_INTERVAL_MS = 800;
-const DEFAULT_SOURCE_PLACEHOLDER = "URL or text for search";
 const DEFAULT_UI_TEXTS = {
   eyebrow: "Tracker Dashboard",
   title: "TrackerView",
   subtitle:
-    "Paste a tracker page URL or type search text to build a clean release table with poster, description, publication date and release size."
+    "Paste a tracker page URL or type search text to build a clean release table with poster, description, publication date and release size.",
+  auth_title: "Sign in",
+  auth_subtitle: "Use tracker username and password.",
+  auth_status_prompt: "Sign in with tracker credentials.",
+  auth_username_placeholder: "Username",
+  auth_password_placeholder: "Password",
+  auth_submit: "Sign in",
+  source_label: "Source URL or text query",
+  source_placeholder: "URL or text for search",
+  saved_searches: "Saved searches",
+  load_releases: "Load releases",
+  filters: "Filters",
+  status_idle: "Idle",
+  status_done: "Done",
+  status_processing: "Processing releases...",
+  status_signed_in: "Signed in.",
+  status_signed_out: "Signed out.",
+  status_auth_required: "Sign in to continue.",
+  status_signing_in: "Signing in...",
+  status_starting_update: "Starting update...",
+  status_update_started: "Update started.",
+  update_started_message: "Update started. Wait for restart and refresh this page.",
+  update_running: "Update is running...",
+  update_last_error_prefix: "Last update error:",
+  update_exit_code_template: "Last update exited with code {code}.",
+  update_confirm:
+    "Start application update now? The app will restart and may be unavailable for a short time.",
+  processed_prefix: "Processed:",
+  table_poster: "Poster",
+  table_description: "Description",
+  table_published: "Published",
+  table_size: "Size",
+  table_no_data: "No data loaded. Submit a URL or text query to build the release table.",
+  table_no_parsed: "No releases were parsed from this page.",
+  table_no_matches: "No releases match selected categories.",
+  table_waiting: "Waiting for parsed releases...",
+  table_unable_to_load: "Unable to load releases. Check tracker URL and credentials.",
+  summary_scanning: "Scanning source page for release links...",
+  summary_found_links_template: "Found {found} links.",
+  summary_found_parsed_template: "Found {found} links. Parsed {parsed} releases.",
+  signed_in_as_template: "Signed in as {username}",
+  update_button: "Update app",
+  logout_button: "Log out",
+  seeds_prefix: "Seeds:"
 };
+let uiTexts = { ...DEFAULT_UI_TEXTS };
 const hoverPanel = document.createElement("div");
 const hoverPanelImage = document.createElement("img");
 const clientConfig = {
@@ -93,14 +145,66 @@ function setAuthStatus(message, isError = false) {
   authStatusNode.classList.toggle("error", Boolean(isError));
 }
 
-function setHeaderTexts(texts = {}) {
-  const eyebrow = String(texts.eyebrow || "").trim() || DEFAULT_UI_TEXTS.eyebrow;
-  const title = String(texts.title || "").trim() || DEFAULT_UI_TEXTS.title;
-  const subtitle = String(texts.subtitle || "").trim() || DEFAULT_UI_TEXTS.subtitle;
+function resolveUiText(key, fallback = "") {
+  const raw = String(uiTexts[key] || "").trim();
+  if (raw) {
+    return raw;
+  }
 
-  appEyebrowNode.textContent = eyebrow;
-  appTitleNode.textContent = title;
-  appSubtitleNode.textContent = subtitle;
+  const base = String(DEFAULT_UI_TEXTS[key] || "").trim();
+  if (base) {
+    return base;
+  }
+
+  return String(fallback || "");
+}
+
+function formatUiTemplate(key, values = {}, fallback = "") {
+  const template = resolveUiText(key, fallback);
+  return template.replace(/\{([a-zA-Z0-9_]+)\}/g, (_, token) => {
+    if (Object.prototype.hasOwnProperty.call(values, token)) {
+      return String(values[token]);
+    }
+    return `{${token}}`;
+  });
+}
+
+function applyUiTexts() {
+  appEyebrowNode.textContent = resolveUiText("eyebrow", DEFAULT_UI_TEXTS.eyebrow);
+  appTitleNode.textContent = resolveUiText("title", DEFAULT_UI_TEXTS.title);
+  appSubtitleNode.textContent = resolveUiText("subtitle", DEFAULT_UI_TEXTS.subtitle);
+
+  authTitleNode.textContent = resolveUiText("auth_title", DEFAULT_UI_TEXTS.auth_title);
+  authSubtitleNode.textContent = resolveUiText("auth_subtitle", DEFAULT_UI_TEXTS.auth_subtitle);
+  authUsernameInput.placeholder = resolveUiText(
+    "auth_username_placeholder",
+    DEFAULT_UI_TEXTS.auth_username_placeholder
+  );
+  authPasswordInput.placeholder = resolveUiText(
+    "auth_password_placeholder",
+    DEFAULT_UI_TEXTS.auth_password_placeholder
+  );
+  authSubmitButton.textContent = resolveUiText("auth_submit", DEFAULT_UI_TEXTS.auth_submit);
+
+  sourceLabelNode.textContent = resolveUiText("source_label", DEFAULT_UI_TEXTS.source_label);
+  sourceInput.placeholder = resolveUiText("source_placeholder", DEFAULT_UI_TEXTS.source_placeholder);
+  loadButton.textContent = resolveUiText("load_releases", DEFAULT_UI_TEXTS.load_releases);
+  filtersToggleButton.textContent = resolveUiText("filters", DEFAULT_UI_TEXTS.filters);
+  savedSearchesSelect.title = resolveUiText("saved_searches", DEFAULT_UI_TEXTS.saved_searches);
+  savedSearchesSelect.setAttribute("aria-label", resolveUiText("saved_searches", DEFAULT_UI_TEXTS.saved_searches));
+  savedSearchesPlaceholderOption.textContent = resolveUiText("saved_searches", DEFAULT_UI_TEXTS.saved_searches);
+
+  tableHeaderPosterNode.textContent = resolveUiText("table_poster", DEFAULT_UI_TEXTS.table_poster);
+  tableHeaderDescriptionNode.textContent = resolveUiText(
+    "table_description",
+    DEFAULT_UI_TEXTS.table_description
+  );
+  tableHeaderPublishedNode.textContent = resolveUiText("table_published", DEFAULT_UI_TEXTS.table_published);
+  tableHeaderSizeNode.textContent = resolveUiText("table_size", DEFAULT_UI_TEXTS.table_size);
+  tablePlaceholderCell.textContent = resolveUiText("table_no_data", DEFAULT_UI_TEXTS.table_no_data);
+
+  updateButton.textContent = resolveUiText("update_button", DEFAULT_UI_TEXTS.update_button);
+  logoutButton.textContent = resolveUiText("logout_button", DEFAULT_UI_TEXTS.logout_button);
 }
 
 function setAppVersion(version) {
@@ -142,7 +246,7 @@ function resetDataState() {
   setProgress(0, 0);
   renderSavedSearches();
   renderCategoryFilters();
-  renderPlaceholder("No data loaded. Submit a URL or text query to build the release table.");
+  renderPlaceholder(resolveUiText("table_no_data", DEFAULT_UI_TEXTS.table_no_data));
 }
 
 function setAuthenticatedUi(authenticated, username = "") {
@@ -154,7 +258,11 @@ function setAuthenticatedUi(authenticated, username = "") {
   authUserNode.classList.toggle("hidden", !signedIn);
 
   if (signedIn) {
-    authUserNode.textContent = `Signed in as ${username}`;
+    authUserNode.textContent = formatUiTemplate(
+      "signed_in_as_template",
+      { username },
+      DEFAULT_UI_TEXTS.signed_in_as_template
+    );
     setUpdateButtonVisible(isUpdateAvailable);
     setAuthStatus("");
     return;
@@ -175,8 +283,8 @@ function setAuthenticatedUi(authenticated, username = "") {
 function handleUnauthorized(message = "") {
   setAuthenticatedUi(false);
   resetDataState();
-  setStatus("Sign in to continue.");
-  setAuthStatus(message || "Session expired. Sign in again.", true);
+  setStatus(resolveUiText("status_auth_required", DEFAULT_UI_TEXTS.status_auth_required));
+  setAuthStatus(message || resolveUiText("auth_status_prompt", DEFAULT_UI_TEXTS.auth_status_prompt), true);
 }
 
 async function fetchJson(url, options = {}) {
@@ -238,7 +346,15 @@ async function loadUiTexts() {
   }
 
   const payload = await response.json();
-  setHeaderTexts(payload || {});
+  if (!payload || typeof payload !== "object") {
+    return;
+  }
+
+  uiTexts = {
+    ...DEFAULT_UI_TEXTS,
+    ...payload
+  };
+  applyUiTexts();
 }
 
 async function loadUpdateControlStatus() {
@@ -353,7 +469,7 @@ function renderSavedSearches() {
 
   const placeholderOption = document.createElement("option");
   placeholderOption.value = "";
-  placeholderOption.textContent = "Saved searches";
+  placeholderOption.textContent = resolveUiText("saved_searches", DEFAULT_UI_TEXTS.saved_searches);
   savedSearchesSelect.appendChild(placeholderOption);
 
   for (const entry of savedSearches) {
@@ -430,17 +546,18 @@ function setStatus(message, isError = false) {
 function setProgress(processed, total) {
   const safeProcessed = Number.isFinite(processed) ? processed : 0;
   const safeTotal = Number.isFinite(total) ? total : 0;
+  const prefix = resolveUiText("processed_prefix", DEFAULT_UI_TEXTS.processed_prefix);
   if (safeTotal > 0) {
-    progressNode.textContent = `Processed: ${safeProcessed}/${safeTotal}`;
+    progressNode.textContent = `${prefix} ${safeProcessed}/${safeTotal}`;
     return;
   }
 
   if (safeProcessed > 0) {
-    progressNode.textContent = `Processed: ${safeProcessed}/?`;
+    progressNode.textContent = `${prefix} ${safeProcessed}/?`;
     return;
   }
 
-  progressNode.textContent = "Processed: 0/0";
+  progressNode.textContent = `${prefix} 0/0`;
 }
 
 function clearTable() {
@@ -666,7 +783,7 @@ function createDateCell(release) {
 
   const seedsLine = document.createElement("div");
   seedsLine.className = "seeds-line";
-  seedsLine.textContent = `Seeds: ${seedsValue}`;
+  seedsLine.textContent = `${resolveUiText("seeds_prefix", DEFAULT_UI_TEXTS.seeds_prefix)} ${seedsValue}`;
 
   cell.appendChild(dateValue);
   cell.appendChild(seedsLine);
@@ -697,7 +814,7 @@ function renderReleases(releases) {
   clearTable();
 
   if (!Array.isArray(releases) || releases.length === 0) {
-    renderPlaceholder("No releases were parsed from this page.");
+    renderPlaceholder(resolveUiText("table_no_parsed", DEFAULT_UI_TEXTS.table_no_parsed));
     return;
   }
 
@@ -840,7 +957,7 @@ function updateTableView() {
   });
 
   if (sortedReleases.length > 0 && visibleReleases.length === 0) {
-    renderPlaceholder("No releases match selected categories.");
+    renderPlaceholder(resolveUiText("table_no_matches", DEFAULT_UI_TEXTS.table_no_matches));
     return;
   }
 
@@ -868,7 +985,7 @@ async function loadClientConfig() {
   clientConfig.maxReleases = maxReleases;
   clientConfig.hardMaxReleases = hardMaxReleases;
 
-  sourceInput.placeholder = DEFAULT_SOURCE_PLACEHOLDER;
+  sourceInput.placeholder = resolveUiText("source_placeholder", DEFAULT_UI_TEXTS.source_placeholder);
   maxReleasesInput.value = String(maxReleases);
   maxReleasesInput.max = String(hardMaxReleases);
 }
@@ -997,17 +1114,21 @@ function applyUpdateControlStatus(payload) {
   }
 
   if (running) {
-    setUpdateStatus("Update is running...");
+    setUpdateStatus(resolveUiText("update_running", DEFAULT_UI_TEXTS.update_running));
     return;
   }
 
   if (lastError) {
-    setUpdateStatus(`Last update error: ${lastError}`, true);
+    const prefix = resolveUiText("update_last_error_prefix", DEFAULT_UI_TEXTS.update_last_error_prefix);
+    setUpdateStatus(`${prefix} ${lastError}`, true);
     return;
   }
 
   if (Number.isInteger(lastExitCode) && lastExitCode !== 0) {
-    setUpdateStatus(`Last update exited with code ${lastExitCode}.`, true);
+    setUpdateStatus(
+      formatUiTemplate("update_exit_code_template", { code: lastExitCode }, DEFAULT_UI_TEXTS.update_exit_code_template),
+      true
+    );
     return;
   }
 
@@ -1022,14 +1143,14 @@ async function refreshUpdateControlStatus() {
 async function initializeAuthenticatedApp() {
   loadButton.disabled = true;
   setProgress(0, 0);
-  setStatus("Idle");
+  setStatus(resolveUiText("status_idle", DEFAULT_UI_TEXTS.status_idle));
   summaryNode.textContent = "";
   setSaveSearchButtonVisible(false);
 
   try {
     await loadClientConfig();
   } catch (error) {
-    sourceInput.placeholder = DEFAULT_SOURCE_PLACEHOLDER;
+    sourceInput.placeholder = resolveUiText("source_placeholder", DEFAULT_UI_TEXTS.source_placeholder);
     maxReleasesInput.max = String(clientConfig.hardMaxReleases);
     setStatus(error.message || "Failed to load client config.", true);
   }
@@ -1068,8 +1189,8 @@ setFiltersExpanded(false);
 setSaveSearchButtonVisible(false);
 setAuthenticatedUi(false);
 resetDataState();
-setStatus("Sign in to continue.");
-setAuthStatus("Sign in with tracker credentials.");
+setStatus(resolveUiText("status_auth_required", DEFAULT_UI_TEXTS.status_auth_required));
+setAuthStatus(resolveUiText("auth_status_prompt", DEFAULT_UI_TEXTS.auth_status_prompt));
 
 savedSearchesSelect.addEventListener("change", () => {
   if (!isAuthenticated) {
@@ -1155,7 +1276,7 @@ saveSearchForm.addEventListener("submit", async (event) => {
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (!isAuthenticated) {
-    setStatus("Sign in to continue.", true);
+    setStatus(resolveUiText("status_auth_required", DEFAULT_UI_TEXTS.status_auth_required), true);
     return;
   }
 
@@ -1183,7 +1304,7 @@ form.addEventListener("submit", async (event) => {
   setProgress(0, 0);
   summaryNode.textContent = "";
   allReleases = [];
-  renderPlaceholder("Waiting for parsed releases...");
+  renderPlaceholder(resolveUiText("table_waiting", DEFAULT_UI_TEXTS.table_waiting));
 
   try {
     const jobId = await startParseJob(sourceRequest, maxReleases);
@@ -1193,13 +1314,21 @@ form.addEventListener("submit", async (event) => {
       const processed = Number.isFinite(job.processed) ? job.processed : releases.length;
       const totalFound = Number.isFinite(job.totalFound) ? job.totalFound : 0;
 
-      setStatus(job.status === "done" ? "Done" : "Processing releases...");
+      setStatus(
+        job.status === "done"
+          ? resolveUiText("status_done", DEFAULT_UI_TEXTS.status_done)
+          : resolveUiText("status_processing", DEFAULT_UI_TEXTS.status_processing)
+      );
       setProgress(processed, totalFound);
 
       if (totalFound > 0) {
-        summaryNode.textContent = `Found ${totalFound} links.`;
+        summaryNode.textContent = formatUiTemplate(
+          "summary_found_links_template",
+          { found: totalFound },
+          DEFAULT_UI_TEXTS.summary_found_links_template
+        );
       } else {
-        summaryNode.textContent = "Scanning source page for release links...";
+        summaryNode.textContent = resolveUiText("summary_scanning", DEFAULT_UI_TEXTS.summary_scanning);
       }
 
       if (Array.isArray(job.categories)) {
@@ -1225,9 +1354,13 @@ form.addEventListener("submit", async (event) => {
     updateTableView();
 
     const parsed = allReleases.length;
-    summaryNode.textContent = `Found ${finalJob.totalFound} links. Parsed ${parsed} releases.`;
+    summaryNode.textContent = formatUiTemplate(
+      "summary_found_parsed_template",
+      { found: finalJob.totalFound, parsed },
+      DEFAULT_UI_TEXTS.summary_found_parsed_template
+    );
     setProgress(finalJob.processed, finalJob.totalFound);
-    setStatus("Done");
+    setStatus(resolveUiText("status_done", DEFAULT_UI_TEXTS.status_done));
     const resolvedSourceUrl = normalizeSearchUrl(finalJob.sourceUrl) || normalizeSearchUrl(pageUrl) || pageUrl;
     lastSuccessfulSearchUrl = resolvedSourceUrl;
     if (lastSuccessfulSearchUrl) {
@@ -1245,7 +1378,7 @@ form.addEventListener("submit", async (event) => {
     if (!isAuthenticated) {
       return;
     }
-    renderPlaceholder("Unable to load releases. Check tracker URL and credentials.");
+    renderPlaceholder(resolveUiText("table_unable_to_load", DEFAULT_UI_TEXTS.table_unable_to_load));
     summaryNode.textContent = "";
     setProgress(0, 0);
     setStatus(error.message || "Unexpected error", true);
@@ -1265,12 +1398,12 @@ authForm.addEventListener("submit", async (event) => {
   }
 
   authSubmitButton.disabled = true;
-  setAuthStatus("Signing in...");
+  setAuthStatus(resolveUiText("status_signing_in", DEFAULT_UI_TEXTS.status_signing_in));
   try {
     const payload = await loginWithTrackerCredentials(username, password);
     setAuthenticatedUi(true, payload.username || username);
     setAuthStatus("");
-    setStatus("Signed in.");
+    setStatus(resolveUiText("status_signed_in", DEFAULT_UI_TEXTS.status_signed_in));
     await initializeAuthenticatedApp();
   } catch (error) {
     setAuthStatus(error.message || "Failed to sign in.", true);
@@ -1305,21 +1438,19 @@ updateButton.addEventListener("click", async () => {
     return;
   }
 
-  const shouldStart = window.confirm(
-    "Start application update now? The app will restart and may be unavailable for a short time."
-  );
+  const shouldStart = window.confirm(resolveUiText("update_confirm", DEFAULT_UI_TEXTS.update_confirm));
   if (!shouldStart) {
     return;
   }
 
   updateButton.disabled = true;
-  setUpdateStatus("Starting update...");
+  setUpdateStatus(resolveUiText("status_starting_update", DEFAULT_UI_TEXTS.status_starting_update));
 
   try {
     const payload = await startApplicationUpdate();
     applyUpdateControlStatus(payload);
-    setStatus("Update started.");
-    setUpdateStatus("Update started. Wait for restart and refresh this page.");
+    setStatus(resolveUiText("status_update_started", DEFAULT_UI_TEXTS.status_update_started));
+    setUpdateStatus(resolveUiText("update_started_message", DEFAULT_UI_TEXTS.update_started_message));
   } catch (error) {
     updateButton.disabled = false;
     setUpdateStatus(error.message || "Failed to start update.", true);
@@ -1336,8 +1467,8 @@ logoutButton.addEventListener("click", async () => {
   } finally {
     setAuthenticatedUi(false);
     resetDataState();
-    setStatus("Signed out.");
-    setAuthStatus("Signed out.");
+    setStatus(resolveUiText("status_signed_out", DEFAULT_UI_TEXTS.status_signed_out));
+    setAuthStatus(resolveUiText("status_signed_out", DEFAULT_UI_TEXTS.status_signed_out));
     authPasswordInput.value = "";
     logoutButton.disabled = false;
     authUsernameInput.focus();
@@ -1345,7 +1476,8 @@ logoutButton.addEventListener("click", async () => {
 });
 
 (async () => {
-  setHeaderTexts(DEFAULT_UI_TEXTS);
+  uiTexts = { ...DEFAULT_UI_TEXTS };
+  applyUiTexts();
 
   try {
     await loadUiTexts();
@@ -1363,7 +1495,7 @@ logoutButton.addEventListener("click", async () => {
     const status = await loadAuthStatus();
     if (status?.authenticated) {
       setAuthenticatedUi(true, status.username || "");
-      setStatus("Signed in.");
+      setStatus(resolveUiText("status_signed_in", DEFAULT_UI_TEXTS.status_signed_in));
       await initializeAuthenticatedApp();
       return;
     }
@@ -1373,6 +1505,6 @@ logoutButton.addEventListener("click", async () => {
   }
 
   setAuthenticatedUi(false);
-  setStatus("Sign in to continue.");
-  setAuthStatus("Sign in with tracker credentials.");
+  setStatus(resolveUiText("status_auth_required", DEFAULT_UI_TEXTS.status_auth_required));
+  setAuthStatus(resolveUiText("auth_status_prompt", DEFAULT_UI_TEXTS.auth_status_prompt));
 })();

@@ -30,8 +30,8 @@
 
       <section id="auth-panel" class="panel auth-panel">
         <form id="auth-form" autocomplete="off">
-          <p class="auth-title">Sign in</p>
-          <p class="auth-subtitle">Use tracker username and password.</p>
+          <p id="auth-title" class="auth-title">Sign in</p>
+          <p id="auth-subtitle" class="auth-subtitle">Use tracker username and password.</p>
           <div class="auth-row">
             <input
               id="auth-username"
@@ -58,7 +58,7 @@
       <div id="app-content" class="app-content hidden">
         <section class="panel controls">
           <form id="load-form" autocomplete="off">
-            <label for="source-url">Source URL or text query</label>
+            <label id="source-label" for="source-url">Source URL or text query</label>
             <div class="control-row">
               <div class="source-input-wrap">
                 <input
@@ -73,7 +73,7 @@
                   title="Saved searches"
                   aria-label="Saved searches"
                 >
-                  <option value="">Saved searches</option>
+                  <option id="saved-searches-placeholder-option" value="">Saved searches</option>
                 </select>
               </div>
               <input
@@ -124,15 +124,15 @@
             <table id="releases-table">
               <thead>
                 <tr>
-                  <th>Poster</th>
-                  <th>Description</th>
-                  <th>Published</th>
-                  <th>Size</th>
+                  <th id="table-header-poster">Poster</th>
+                  <th id="table-header-description">Description</th>
+                  <th id="table-header-published">Published</th>
+                  <th id="table-header-size">Size</th>
                 </tr>
               </thead>
               <tbody id="releases-body">
                 <tr>
-                  <td colspan="4" class="placeholder">
+                  <td id="table-placeholder-cell" colspan="4" class="placeholder">
                     No data loaded. Submit a URL or text query to build the release table.
                   </td>
                 </tr>
