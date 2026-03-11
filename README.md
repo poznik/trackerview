@@ -16,6 +16,7 @@ Settings are loaded from environment variables (`.env` supported):
 - `TRACKER_USERNAME` (required)
 - `TRACKER_PASSWORD` (required)
 - `TRACKER_MAX_RELEASES` (default `80`)
+- `TRACKER_HARD_MAX_RELEASES` (default `700`, upper bound for request `maxReleases`)
 - `TRACKER_CONCURRENCY` (default `4`)
 - `TRACKER_REQUEST_TIMEOUT_MS` (default `25000`)
 

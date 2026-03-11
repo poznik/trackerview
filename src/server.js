@@ -35,6 +35,14 @@ async function createLoggedClient() {
   return client;
 }
 
+function resolveMaxReleases(rawValue) {
+  const parsedValue = Number.parseInt(String(rawValue || ""), 10);
+  const requested =
+    Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : config.tracker.maxReleases;
+  const hardMax = Math.max(1, Number.parseInt(String(config.tracker.hardMaxReleases || ""), 10) || 700);
+  return Math.min(requested, hardMax);
+}
+
 function createJobSnapshot(job) {
   return {
     jobId: job.jobId,
@@ -161,11 +169,7 @@ app.post("/api/release", async (request, response) => {
 app.post("/api/releases", async (request, response) => {
   const pageUrl = String(request.body?.pageUrl || "").trim();
   const parsedUrl = parseSafeUrl(pageUrl);
-  const bodyMaxReleases = Number.parseInt(String(request.body?.maxReleases || ""), 10);
-  const maxReleases =
-    Number.isFinite(bodyMaxReleases) && bodyMaxReleases > 0
-      ? Math.min(bodyMaxReleases, 500)
-      : config.tracker.maxReleases;
+  const maxReleases = resolveMaxReleases(request.body?.maxReleases);
 
   if (!parsedUrl) {
     return response.status(400).json({ error: "pageUrl must be a valid URL." });
@@ -192,11 +196,7 @@ app.post("/api/releases/job", async (request, response) => {
 
   const pageUrl = String(request.body?.pageUrl || "").trim();
   const parsedUrl = parseSafeUrl(pageUrl);
-  const bodyMaxReleases = Number.parseInt(String(request.body?.maxReleases || ""), 10);
-  const maxReleases =
-    Number.isFinite(bodyMaxReleases) && bodyMaxReleases > 0
-      ? Math.min(bodyMaxReleases, 500)
-      : config.tracker.maxReleases;
+  const maxReleases = resolveMaxReleases(request.body?.maxReleases);
 
   if (!parsedUrl) {
     return response.status(400).json({ error: "pageUrl must be a valid URL." });

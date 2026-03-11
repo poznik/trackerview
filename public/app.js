@@ -859,7 +859,7 @@ form.addEventListener("submit", async (event) => {
   const maxReleasesValue = Number.parseInt(String(maxReleasesInput.value || "").trim(), 10);
   const maxReleases =
     Number.isFinite(maxReleasesValue) && maxReleasesValue > 0
-      ? Math.min(maxReleasesValue, 500)
+      ? maxReleasesValue
       : undefined;
 
   if (!sourceRequest.rawInput) {

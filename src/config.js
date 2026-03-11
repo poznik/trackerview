@@ -14,6 +14,7 @@ const config = {
     username: process.env.TRACKER_USERNAME || "",
     password: process.env.TRACKER_PASSWORD || "",
     maxReleases: toNumber(process.env.TRACKER_MAX_RELEASES, 80),
+    hardMaxReleases: toNumber(process.env.TRACKER_HARD_MAX_RELEASES, 700),
     concurrency: toNumber(process.env.TRACKER_CONCURRENCY, 4),
     requestTimeoutMs: toNumber(process.env.TRACKER_REQUEST_TIMEOUT_MS, 25000),
     userAgent:
