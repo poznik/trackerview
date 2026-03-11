@@ -614,24 +614,33 @@ tbody td:nth-child(4) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 1em;
+  height: 1em;
   padding: 0;
-  border: 1px solid rgba(30, 42, 39, 0.24);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.92);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: #2a4f47;
   cursor: pointer;
+  font: inherit;
+  line-height: 1;
+  vertical-align: middle;
 }
 
 .server-download-btn svg {
-  width: 18px;
-  height: 18px;
+  width: 1em;
+  height: 1em;
   fill: currentColor;
 }
 
 .server-download-btn:hover {
-  background: #eef6f2;
+  color: #1f6f5f;
+}
+
+.server-download-btn:focus-visible {
+  outline: 2px solid rgba(31, 111, 95, 0.45);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .server-download-btn:disabled {
@@ -642,12 +651,16 @@ tbody td:nth-child(4) {
 .server-download-wrap {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  position: relative;
+  flex: 0 0 auto;
 }
 
 .server-download-toast {
+  position: absolute;
+  top: 50%;
+  left: calc(100% + 8px);
   opacity: 0;
-  transform: translateY(-2px);
+  transform: translateY(calc(-50% - 2px));
   transition: opacity 150ms ease, transform 150ms ease;
   font-size: 0.72rem;
   line-height: 1.1;
@@ -661,24 +674,35 @@ tbody td:nth-child(4) {
 
 .server-download-toast.visible {
   opacity: 1;
-  transform: translateY(0);
+  transform: translateY(-50%);
+}
+
+.size-cell {
+  vertical-align: middle;
+  text-align: center;
 }
 
 .size-cell-content {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 
 .size-line {
-  display: block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  line-height: 1.1;
+  white-space: nowrap;
 }
 
 .size-meta-line {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
 }
 
 .size-value {

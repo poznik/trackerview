@@ -1177,14 +1177,16 @@ function createSizeCell(release, row) {
   cell.className = "size-cell";
   const content = document.createElement("div");
   content.className = "size-cell-content";
+  const qualityLine = document.createElement("div");
+  qualityLine.className = "size-meta-line";
   const sizeLine = document.createElement("div");
   sizeLine.className = "size-line";
-  const metaLine = document.createElement("div");
-  metaLine.className = "size-meta-line";
   const sizeText = String(release?.size || "").trim() || "-";
   const torrentUrl = String(release?.torrentUrl || "").trim();
   const qualityInfo = resolveReleaseQualityInfo(release);
   const qualityBadge = createQualityBadge(qualityInfo);
+
+  qualityLine.appendChild(qualityBadge);
 
   if (torrentUrl) {
     const link = document.createElement("a");
@@ -1205,17 +1207,16 @@ function createSizeCell(release, row) {
     sizeLine.appendChild(sizeValue);
   }
 
-  metaLine.appendChild(qualityBadge);
   const serverDownloadControl = createServerDownloadControl(release, () => {
     markReleaseAsDownloaded(release);
     applyDownloadedRowState(row, release);
   });
   if (serverDownloadControl) {
-    metaLine.appendChild(serverDownloadControl);
+    sizeLine.appendChild(serverDownloadControl);
   }
 
+  content.appendChild(qualityLine);
   content.appendChild(sizeLine);
-  content.appendChild(metaLine);
   cell.appendChild(content);
   return cell;
 }
