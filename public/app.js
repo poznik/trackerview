@@ -1,3 +1,12 @@
+const authPanel = document.getElementById("auth-panel");
+const appContent = document.getElementById("app-content");
+const authForm = document.getElementById("auth-form");
+const authUsernameInput = document.getElementById("auth-username");
+const authPasswordInput = document.getElementById("auth-password");
+const authSubmitButton = document.getElementById("auth-submit");
+const authStatusNode = document.getElementById("auth-status");
+const authUserNode = document.getElementById("auth-user");
+const logoutButton = document.getElementById("logout-btn");
 const form = document.getElementById("load-form");
 const sourceInput = document.getElementById("source-url");
 const savedSearchesSelect = document.getElementById("saved-searches-select");
@@ -58,11 +67,108 @@ const monthIndexByName = {
 let allReleases = [];
 let savedSearches = [];
 let lastSuccessfulSearchUrl = "";
+let isAuthenticated = false;
 const categoryState = new Map();
 
 hoverPanel.className = "poster-hover-panel";
 hoverPanel.appendChild(hoverPanelImage);
 document.body.appendChild(hoverPanel);
+
+function setAuthStatus(message, isError = false) {
+  authStatusNode.textContent = String(message || "");
+  authStatusNode.classList.toggle("error", Boolean(isError));
+}
+
+function resetDataState() {
+  allReleases = [];
+  savedSearches = [];
+  lastSuccessfulSearchUrl = "";
+  categoryState.clear();
+  sourceInput.value = "";
+  savedSearchesSelect.value = "";
+  summaryNode.textContent = "";
+  setProgress(0, 0);
+  renderSavedSearches();
+  renderCategoryFilters();
+  renderPlaceholder("No data loaded. Submit a URL or text query to build the release table.");
+}
+
+function setAuthenticatedUi(authenticated, username = "") {
+  const signedIn = Boolean(authenticated);
+  isAuthenticated = signedIn;
+  authPanel.classList.toggle("hidden", signedIn);
+  appContent.classList.toggle("hidden", !signedIn);
+  logoutButton.classList.toggle("hidden", !signedIn);
+  authUserNode.classList.toggle("hidden", !signedIn);
+
+  if (signedIn) {
+    authUserNode.textContent = `Signed in as ${username}`;
+    setAuthStatus("");
+    return;
+  }
+
+  authUserNode.textContent = "";
+  authPasswordInput.value = "";
+  setSaveSearchButtonVisible(false);
+  setFiltersExpanded(false);
+  hidePosterPreview();
+  if (saveSearchDialog.open) {
+    saveSearchDialog.close();
+  }
+  loadButton.disabled = true;
+}
+
+function handleUnauthorized(message = "") {
+  setAuthenticatedUi(false);
+  resetDataState();
+  setStatus("Sign in to continue.");
+  setAuthStatus(message || "Session expired. Sign in again.", true);
+}
+
+async function fetchJson(url, options = {}) {
+  const response = await fetch(url, options);
+  let payload = {};
+
+  try {
+    payload = await response.json();
+  } catch (error) {
+    payload = {};
+  }
+
+  if (response.status === 401) {
+    handleUnauthorized(payload.error || "Authentication required.");
+    throw new Error(payload.error || "Authentication required.");
+  }
+
+  if (!response.ok) {
+    throw new Error(payload.error || `Request failed (HTTP ${response.status}).`);
+  }
+
+  return payload;
+}
+
+async function loadAuthStatus() {
+  return fetchJson("/api/auth/status");
+}
+
+async function loginWithTrackerCredentials(username, password) {
+  return fetchJson("/api/auth/login", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({ username, password })
+  });
+}
+
+async function logoutCurrentSession() {
+  return fetchJson("/api/auth/logout", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    }
+  });
+}
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -528,7 +634,7 @@ async function upsertCategoriesOnServer(entries) {
     return null;
   }
 
-  const response = await fetch("/api/categories", {
+  return fetchJson("/api/categories", {
     method: "POST",
     headers: {
       "content-type": "application/json"
@@ -537,13 +643,6 @@ async function upsertCategoriesOnServer(entries) {
       categories: buildCategoryPayload(entries)
     })
   });
-
-  const payload = await response.json();
-  if (!response.ok) {
-    throw new Error(payload.error || `Categories request failed (HTTP ${response.status}).`);
-  }
-
-  return payload;
 }
 
 function mergeCategoriesIntoState(categories) {
@@ -648,11 +747,7 @@ function updateTableView() {
 }
 
 async function loadClientConfig() {
-  const response = await fetch("/api/client-config");
-  const payload = await response.json();
-  if (!response.ok) {
-    throw new Error(payload.error || `Failed to load client config (HTTP ${response.status}).`);
-  }
+  const payload = await fetchJson("/api/client-config");
 
   const tracker = payload?.tracker || {};
   const defaultSourceUrl = normalizeSearchUrl(tracker.defaultSourceUrl);
@@ -677,7 +772,7 @@ async function loadClientConfig() {
 }
 
 async function startParseJob(sourceRequest, maxReleases) {
-  const response = await fetch("/api/releases/job", {
+  const payload = await fetchJson("/api/releases/job", {
     method: "POST",
     headers: {
       "content-type": "application/json"
@@ -689,11 +784,6 @@ async function startParseJob(sourceRequest, maxReleases) {
     })
   });
 
-  const payload = await response.json();
-  if (!response.ok) {
-    throw new Error(payload.error || `Request failed (HTTP ${response.status}).`);
-  }
-
   if (!payload.jobId) {
     throw new Error("Parse job did not return jobId.");
   }
@@ -702,12 +792,7 @@ async function startParseJob(sourceRequest, maxReleases) {
 }
 
 async function loadParseJob(jobId) {
-  const response = await fetch(`/api/releases/job/${encodeURIComponent(jobId)}`);
-  const payload = await response.json();
-  if (!response.ok) {
-    throw new Error(payload.error || `Job polling failed (HTTP ${response.status}).`);
-  }
-  return payload;
+  return fetchJson(`/api/releases/job/${encodeURIComponent(jobId)}`);
 }
 
 async function pollJobUntilDone(jobId, onUpdate) {
@@ -728,40 +813,27 @@ async function pollJobUntilDone(jobId, onUpdate) {
 }
 
 async function loadSavedCategories() {
-  const response = await fetch("/api/categories");
-  const payload = await response.json();
-  if (!response.ok) {
-    throw new Error(payload.error || `Failed to load categories (HTTP ${response.status}).`);
-  }
+  const payload = await fetchJson("/api/categories");
 
   mergeCategoriesIntoState(payload.categories || []);
   renderCategoryFilters();
 }
 
 async function loadSavedSearches() {
-  const response = await fetch("/api/saved-searches");
-  const payload = await response.json();
-  if (!response.ok) {
-    throw new Error(payload.error || `Failed to load saved searches (HTTP ${response.status}).`);
-  }
+  const payload = await fetchJson("/api/saved-searches");
 
   savedSearches = Array.isArray(payload.searches) ? payload.searches : [];
   renderSavedSearches();
 }
 
 async function upsertSavedSearchOnServer(name, url) {
-  const response = await fetch("/api/saved-searches", {
+  const payload = await fetchJson("/api/saved-searches", {
     method: "POST",
     headers: {
       "content-type": "application/json"
     },
     body: JSON.stringify({ name, url })
   });
-
-  const payload = await response.json();
-  if (!response.ok) {
-    throw new Error(payload.error || `Failed to save search (HTTP ${response.status}).`);
-  }
 
   savedSearches = Array.isArray(payload.searches) ? payload.searches : savedSearches;
   renderSavedSearches();
@@ -804,6 +876,36 @@ function openSaveSearchDialog() {
     });
 }
 
+async function initializeAuthenticatedApp() {
+  loadButton.disabled = true;
+  setProgress(0, 0);
+  setStatus("Idle");
+  summaryNode.textContent = "";
+  setSaveSearchButtonVisible(false);
+
+  try {
+    await loadClientConfig();
+  } catch (error) {
+    sourceInput.placeholder = DEFAULT_SOURCE_PLACEHOLDER;
+    maxReleasesInput.max = String(clientConfig.hardMaxReleases);
+    setStatus(error.message || "Failed to load client config.", true);
+  }
+
+  try {
+    await loadSavedCategories();
+  } catch (error) {
+    renderCategoryFilters();
+  }
+
+  try {
+    await loadSavedSearches();
+  } catch (error) {
+    renderSavedSearches();
+  }
+
+  loadButton.disabled = !isAuthenticated;
+}
+
 window.addEventListener("scroll", () => hidePosterPreview(), true);
 window.addEventListener("resize", () => hidePosterPreview());
 
@@ -815,8 +917,16 @@ document.addEventListener("visibilitychange", () => {
 
 setFiltersExpanded(false);
 setSaveSearchButtonVisible(false);
+setAuthenticatedUi(false);
+resetDataState();
+setStatus("Sign in to continue.");
+setAuthStatus("Sign in with tracker credentials.");
 
 savedSearchesSelect.addEventListener("change", () => {
+  if (!isAuthenticated) {
+    return;
+  }
+
   const selectedUrl = normalizeSearchUrl(savedSearchesSelect.value);
   if (!selectedUrl) {
     return;
@@ -825,16 +935,28 @@ savedSearchesSelect.addEventListener("change", () => {
 });
 
 sourceInput.addEventListener("input", () => {
+  if (!isAuthenticated) {
+    return;
+  }
+
   const normalized = normalizeSearchUrl(sourceInput.value);
   const existing = findSavedSearchByUrl(normalized);
   savedSearchesSelect.value = existing ? normalized : "";
 });
 
 filtersToggleButton.addEventListener("click", () => {
+  if (!isAuthenticated) {
+    return;
+  }
+
   setFiltersExpanded(filtersPanel.hidden);
 });
 
 saveSearchButton.addEventListener("click", () => {
+  if (!isAuthenticated) {
+    return;
+  }
+
   openSaveSearchDialog();
 });
 
@@ -844,6 +966,9 @@ saveSearchCancelButton.addEventListener("click", () => {
 
 saveSearchForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (!isAuthenticated) {
+    return;
+  }
 
   const url = normalizeSearchUrl(saveSearchUrlNode.textContent) || normalizeSearchUrl(sourceInput.value);
   const name = String(saveSearchNameInput.value || "").trim();
@@ -869,6 +994,9 @@ saveSearchForm.addEventListener("submit", async (event) => {
     setStatus("Search saved.");
     saveSearchDialog.close();
   } catch (error) {
+    if (!isAuthenticated) {
+      return;
+    }
     setStatus(error.message || "Failed to save search.", true);
   } finally {
     saveSearchSubmitButton.disabled = false;
@@ -877,6 +1005,10 @@ saveSearchForm.addEventListener("submit", async (event) => {
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (!isAuthenticated) {
+    setStatus("Sign in to continue.", true);
+    return;
+  }
 
   const sourceRequest = resolveSourceRequest(sourceInput.value);
   const pageUrl = sourceRequest.pageUrl;
@@ -961,38 +1093,75 @@ form.addEventListener("submit", async (event) => {
       setSaveSearchButtonVisible(true);
     }
   } catch (error) {
+    if (!isAuthenticated) {
+      return;
+    }
     renderPlaceholder("Unable to load releases. Check tracker URL and credentials.");
     summaryNode.textContent = "";
     setProgress(0, 0);
     setStatus(error.message || "Unexpected error", true);
     setSaveSearchButtonVisible(false);
   } finally {
-    loadButton.disabled = false;
+    loadButton.disabled = !isAuthenticated;
+  }
+});
+
+authForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const username = String(authUsernameInput.value || "").trim();
+  const password = String(authPasswordInput.value || "");
+  if (!username || !password) {
+    setAuthStatus("Username and password are required.", true);
+    return;
+  }
+
+  authSubmitButton.disabled = true;
+  setAuthStatus("Signing in...");
+  try {
+    const payload = await loginWithTrackerCredentials(username, password);
+    setAuthenticatedUi(true, payload.username || username);
+    setAuthStatus("");
+    setStatus("Signed in.");
+    await initializeAuthenticatedApp();
+  } catch (error) {
+    setAuthStatus(error.message || "Failed to sign in.", true);
+  } finally {
+    authSubmitButton.disabled = false;
+  }
+});
+
+logoutButton.addEventListener("click", async () => {
+  logoutButton.disabled = true;
+  try {
+    await logoutCurrentSession();
+  } catch (error) {
+    // Session may already be absent; clear client state anyway.
+  } finally {
+    setAuthenticatedUi(false);
+    resetDataState();
+    setStatus("Signed out.");
+    setAuthStatus("Signed out.");
+    authPasswordInput.value = "";
+    logoutButton.disabled = false;
+    authUsernameInput.focus();
   }
 });
 
 (async () => {
-  loadButton.disabled = true;
-  setProgress(0, 0);
   try {
-    await loadClientConfig();
+    const status = await loadAuthStatus();
+    if (status?.authenticated) {
+      setAuthenticatedUi(true, status.username || "");
+      setStatus("Signed in.");
+      await initializeAuthenticatedApp();
+      return;
+    }
   } catch (error) {
-    sourceInput.placeholder = DEFAULT_SOURCE_PLACEHOLDER;
-    maxReleasesInput.max = String(clientConfig.hardMaxReleases);
-    setStatus(error.message || "Failed to load client config.", true);
-  } finally {
-    loadButton.disabled = false;
+    setAuthStatus(error.message || "Failed to check auth status.", true);
+    return;
   }
 
-  try {
-    await loadSavedCategories();
-  } catch (error) {
-    renderCategoryFilters();
-  }
-
-  try {
-    await loadSavedSearches();
-  } catch (error) {
-    renderSavedSearches();
-  }
+  setAuthenticatedUi(false);
+  setStatus("Sign in to continue.");
+  setAuthStatus("Sign in with tracker credentials.");
 })();

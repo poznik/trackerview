@@ -47,6 +47,11 @@ body {
   animation: rise 0.45s ease-out both;
 }
 
+.app-header {
+  display: grid;
+  gap: 8px;
+}
+
 .app-header h1 {
   margin: 0;
   font-size: clamp(2rem, 4vw, 3rem);
@@ -66,6 +71,77 @@ body {
   margin: 8px 0 0;
   color: var(--ink-muted);
   max-width: 70ch;
+}
+
+.auth-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.auth-user {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 0.92rem;
+}
+
+.auth-panel {
+  padding: 16px;
+}
+
+#auth-form {
+  display: grid;
+  gap: 10px;
+}
+
+.auth-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.auth-subtitle {
+  margin: 0;
+  color: var(--ink-muted);
+}
+
+.auth-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: stretch;
+}
+
+#auth-username,
+#auth-password {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(30, 42, 39, 0.2);
+  font: inherit;
+  color: var(--ink);
+  background: #fff;
+}
+
+#auth-username:focus,
+#auth-password:focus {
+  outline: 2px solid rgba(31, 111, 95, 0.45);
+  outline-offset: 1px;
+}
+
+.auth-status {
+  margin: 0;
+  min-height: 1.3em;
+  color: var(--ink-muted);
+}
+
+.auth-status.error {
+  color: var(--error);
+}
+
+.app-content {
+  display: grid;
+  gap: 18px;
 }
 
 .panel {
@@ -546,6 +622,15 @@ tbody td:nth-child(4) {
   .app-shell {
     width: calc(100% - 20px);
     margin-top: 18px;
+  }
+
+  .auth-row {
+    grid-template-columns: 1fr;
+  }
+
+  .auth-actions {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .control-row {

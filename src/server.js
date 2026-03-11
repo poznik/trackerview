@@ -11,6 +11,9 @@ const { createSavedSearchStore, normalizeSearchName, normalizeSearchUrl } = requ
 const app = express();
 const parseJobs = new Map();
 const PARSE_JOB_TTL_MS = 30 * 60 * 1000;
+const authSessions = new Map();
+const AUTH_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+const AUTH_COOKIE_NAME = "tv_session";
 const categoryStore = createCategoryStore(path.join(__dirname, "..", "data", "categories.json"));
 const savedSearchStore = createSavedSearchStore(path.join(__dirname, "..", "data", "saved-searches.json"));
 
@@ -37,6 +40,125 @@ function normalizeUrl(url) {
 
 function normalizeQueryText(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function trackerCredentialsConfigured() {
+  return Boolean(config.tracker.username && config.tracker.password);
+}
+
+function parseCookieHeader(rawHeader) {
+  const parsed = new Map();
+  const cookieHeader = String(rawHeader || "");
+  if (!cookieHeader) {
+    return parsed;
+  }
+
+  const lines = cookieHeader.split(";");
+  for (const line of lines) {
+    const pair = line.trim();
+    if (!pair) {
+      continue;
+    }
+
+    const separatorIndex = pair.indexOf("=");
+    if (separatorIndex <= 0) {
+      continue;
+    }
+
+    const name = pair.slice(0, separatorIndex).trim();
+    const value = pair.slice(separatorIndex + 1).trim();
+    if (!name) {
+      continue;
+    }
+
+    parsed.set(name, value);
+  }
+
+  return parsed;
+}
+
+function getAuthTokenFromRequest(request) {
+  const cookies = parseCookieHeader(request.headers?.cookie);
+  return String(cookies.get(AUTH_COOKIE_NAME) || "").trim();
+}
+
+function cleanupAuthSessions() {
+  const now = Date.now();
+  for (const [token, session] of authSessions.entries()) {
+    if (!session || session.expiresAt <= now) {
+      authSessions.delete(token);
+    }
+  }
+}
+
+function createAuthSession(username) {
+  cleanupAuthSessions();
+  const token = crypto.randomBytes(32).toString("hex");
+  const expiresAt = Date.now() + AUTH_SESSION_TTL_MS;
+  authSessions.set(token, {
+    username,
+    expiresAt
+  });
+  return { token, expiresAt };
+}
+
+function resolveAuthSession(request) {
+  const token = getAuthTokenFromRequest(request);
+  if (!token) {
+    return null;
+  }
+
+  const session = authSessions.get(token);
+  if (!session) {
+    return null;
+  }
+
+  if (session.expiresAt <= Date.now()) {
+    authSessions.delete(token);
+    return null;
+  }
+
+  return {
+    token,
+    session
+  };
+}
+
+function clearAuthSessionByToken(token) {
+  if (!token) {
+    return;
+  }
+  authSessions.delete(token);
+}
+
+function setAuthCookie(response, token) {
+  response.cookie(AUTH_COOKIE_NAME, token, {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+    maxAge: AUTH_SESSION_TTL_MS
+  });
+}
+
+function clearAuthCookie(response) {
+  response.clearCookie(AUTH_COOKIE_NAME, {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/"
+  });
+}
+
+function safeEquals(left, right) {
+  const leftBuffer = Buffer.from(String(left || ""), "utf8");
+  const rightBuffer = Buffer.from(String(right || ""), "utf8");
+  if (leftBuffer.length !== rightBuffer.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function credentialsMatchTracker(username, password) {
+  return safeEquals(username, config.tracker.username) && safeEquals(password, config.tracker.password);
 }
 
 function resolveHardMaxReleases() {
@@ -178,8 +300,78 @@ function cleanupParseJobs() {
   }
 }
 
+app.use("/api", (request, response, next) => {
+  cleanupAuthSessions();
+  const path = String(request.path || "");
+  if (path === "/health" || path === "/auth/login" || path === "/auth/status" || path === "/auth/logout") {
+    return next();
+  }
+
+  const auth = resolveAuthSession(request);
+  if (!auth) {
+    clearAuthCookie(response);
+    return response.status(401).json({ error: "Authentication required." });
+  }
+
+  request.auth = auth.session;
+  return next();
+});
+
 app.get("/api/health", (_, response) => {
   response.json({ status: "ok" });
+});
+
+app.get("/api/auth/status", (request, response) => {
+  const auth = resolveAuthSession(request);
+  if (!auth) {
+    clearAuthCookie(response);
+    return response.json({
+      authenticated: false,
+      username: null,
+      expiresAt: null
+    });
+  }
+
+  return response.json({
+    authenticated: true,
+    username: auth.session.username,
+    expiresAt: auth.session.expiresAt
+  });
+});
+
+app.post("/api/auth/login", (request, response) => {
+  if (!trackerCredentialsConfigured()) {
+    return response.status(500).json({
+      error: "Tracker credentials are not configured on server."
+    });
+  }
+
+  const username = String(request.body?.username || "").trim();
+  const password = String(request.body?.password || "");
+  if (!username || !password) {
+    return response.status(400).json({ error: "username and password are required." });
+  }
+
+  if (!credentialsMatchTracker(username, password)) {
+    return response.status(401).json({ error: "Invalid username or password." });
+  }
+
+  const session = createAuthSession(username);
+  setAuthCookie(response, session.token);
+  return response.json({
+    authenticated: true,
+    username,
+    expiresAt: session.expiresAt
+  });
+});
+
+app.post("/api/auth/logout", (request, response) => {
+  const token = getAuthTokenFromRequest(request);
+  clearAuthSessionByToken(token);
+  clearAuthCookie(response);
+  response.json({
+    authenticated: false
+  });
 });
 
 app.get("/api/categories", (_, response) => {

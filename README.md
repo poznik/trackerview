@@ -247,6 +247,20 @@ nohup /var/packages/Node.js_v22/target/usr/local/bin/node src/server.js >> /volu
 
 Проверка доступности сервера.
 
+### `GET /api/auth/status`
+
+Проверка текущей сессии авторизации в приложении.
+
+### `POST /api/auth/login`
+
+Вход в приложение по `username` + `password`.
+Учетные данные должны совпадать с `TRACKER_USERNAME` и `TRACKER_PASSWORD`.
+Успешный вход создает HTTP-only cookie-сессию на 24 часа.
+
+### `POST /api/auth/logout`
+
+Завершение текущей сессии.
+
 ### `GET /api/client-config`
 
 Конфигурация для фронтенда:

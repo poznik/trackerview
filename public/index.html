@@ -16,92 +16,125 @@
           Paste a tracker page URL or type search text to build a clean release table with poster,
           description, publication date and release size.
         </p>
+        <div class="auth-actions">
+          <p id="auth-user" class="auth-user hidden"></p>
+          <button id="logout-btn" type="button" class="secondary-btn hidden">Log out</button>
+        </div>
       </header>
 
-      <section class="panel controls">
-        <form id="load-form" autocomplete="off">
-          <label for="source-url">Source URL or text query</label>
-          <div class="control-row">
-            <div class="source-input-wrap">
-              <input
-                id="source-url"
-                name="source-url"
-                type="text"
-                placeholder="URL or text for search"
-              />
-              <select
-                id="saved-searches-select"
-                name="saved-searches-select"
-                title="Saved searches"
-                aria-label="Saved searches"
-              >
-                <option value="">Saved searches</option>
-              </select>
-            </div>
+      <section id="auth-panel" class="panel auth-panel">
+        <form id="auth-form" autocomplete="off">
+          <p class="auth-title">Sign in</p>
+          <p class="auth-subtitle">Use tracker username and password.</p>
+          <div class="auth-row">
             <input
-              id="max-releases"
-              name="max-releases"
-              type="number"
-              min="1"
-              value="80"
-              title="Maximum number of releases to parse"
+              id="auth-username"
+              name="auth-username"
+              type="text"
+              placeholder="Username"
+              autocomplete="username"
+              required
             />
-            <button id="load-btn" type="submit">Load releases</button>
-            <button
-              id="save-search-btn"
-              type="button"
-              title="Save search"
-              aria-label="Save search"
-              class="save-search-btn hidden"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                <path
-                  d="M4 3h13l3 3v15H4V3zm2 2v14h12V7.2L16.2 5H6zm2 0h7v4H8V5zm0 8h8v6H8v-6z"
-                ></path>
-              </svg>
-            </button>
+            <input
+              id="auth-password"
+              name="auth-password"
+              type="password"
+              placeholder="Password"
+              autocomplete="current-password"
+              required
+            />
+            <button id="auth-submit" type="submit">Sign in</button>
           </div>
+          <p id="auth-status" class="auth-status"></p>
         </form>
+      </section>
 
-        <button id="filters-toggle" type="button" class="filters-toggle" aria-expanded="false">
-          Filters
-        </button>
+      <div id="app-content" class="app-content hidden">
+        <section class="panel controls">
+          <form id="load-form" autocomplete="off">
+            <label for="source-url">Source URL or text query</label>
+            <div class="control-row">
+              <div class="source-input-wrap">
+                <input
+                  id="source-url"
+                  name="source-url"
+                  type="text"
+                  placeholder="URL or text for search"
+                />
+                <select
+                  id="saved-searches-select"
+                  name="saved-searches-select"
+                  title="Saved searches"
+                  aria-label="Saved searches"
+                >
+                  <option value="">Saved searches</option>
+                </select>
+              </div>
+              <input
+                id="max-releases"
+                name="max-releases"
+                type="number"
+                min="1"
+                value="80"
+                title="Maximum number of releases to parse"
+              />
+              <button id="load-btn" type="submit">Load releases</button>
+              <button
+                id="save-search-btn"
+                type="button"
+                title="Save search"
+                aria-label="Save search"
+                class="save-search-btn hidden"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path
+                    d="M4 3h13l3 3v15H4V3zm2 2v14h12V7.2L16.2 5H6zm2 0h7v4H8V5zm0 8h8v6H8v-6z"
+                  ></path>
+                </svg>
+              </button>
+            </div>
+          </form>
 
-        <div class="status-row">
-          <p id="status">Idle</p>
-          <p id="progress-counter">Processed: 0/0</p>
-          <p id="summary"></p>
-        </div>
+          <button id="filters-toggle" type="button" class="filters-toggle" aria-expanded="false">
+            Filters
+          </button>
 
-        <div class="category-filter-block" id="filters-panel" hidden>
-          <p class="category-filter-title">Category filters</p>
-          <div id="category-filters" class="category-filters">
-            <p class="category-empty">Categories will appear after loading releases.</p>
+          <div class="status-row">
+            <p id="status">Idle</p>
+            <p id="progress-counter">Processed: 0/0</p>
+            <p id="summary"></p>
           </div>
-        </div>
-      </section>
 
-      <section class="panel table-panel">
-        <div class="table-wrap">
-          <table id="releases-table">
-            <thead>
-              <tr>
-                <th>Poster</th>
-                <th>Description</th>
-                <th>Published</th>
-                <th>Size</th>
-              </tr>
-            </thead>
-            <tbody id="releases-body">
-              <tr>
-                <td colspan="4" class="placeholder">
-                  No data loaded. Submit a URL or text query to build the release table.
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
+          <div class="category-filter-block" id="filters-panel" hidden>
+            <p class="category-filter-title">Category filters</p>
+            <div id="category-filters" class="category-filters">
+              <p class="category-empty">Categories will appear after loading releases.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel table-panel">
+          <div class="table-wrap">
+            <table id="releases-table">
+              <thead>
+                <tr>
+                  <th>Poster</th>
+                  <th>Description</th>
+                  <th>Published</th>
+                  <th>Size</th>
+                </tr>
+              </thead>
+              <tbody id="releases-body">
+                <tr>
+                  <td colspan="4" class="placeholder">
+                    No data loaded. Submit a URL or text query to build the release table.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
     </main>
 
     <dialog id="save-search-dialog" class="save-search-dialog">
