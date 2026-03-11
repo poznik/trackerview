@@ -678,7 +678,7 @@ tbody td:nth-child(4) {
 }
 
 .size-cell {
-  vertical-align: middle;
+  vertical-align: top;
   text-align: center;
 }
 
@@ -686,7 +686,7 @@ tbody td:nth-child(4) {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 6px;
 }
 
