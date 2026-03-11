@@ -652,7 +652,24 @@ function createDescriptionCell(release) {
 
 function createDateCell(release) {
   const cell = document.createElement("td");
-  cell.textContent = release.publicationDate || "-";
+  cell.className = "date-cell";
+
+  const dateValue = document.createElement("div");
+  dateValue.className = "date-value";
+  dateValue.textContent = release.publicationDate || "-";
+
+  const seedsValueRaw = release?.seeds;
+  const seedsValue =
+    Number.isFinite(Number(seedsValueRaw)) || typeof seedsValueRaw === "string"
+      ? String(seedsValueRaw).trim() || "-"
+      : "-";
+
+  const seedsLine = document.createElement("div");
+  seedsLine.className = "seeds-line";
+  seedsLine.textContent = `Seeds: ${seedsValue}`;
+
+  cell.appendChild(dateValue);
+  cell.appendChild(seedsLine);
   return cell;
 }
 
