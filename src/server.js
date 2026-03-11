@@ -1,6 +1,8 @@
 const express = require("express");
 const path = require("path");
 const crypto = require("crypto");
+const fs = require("fs");
+const { spawn } = require("child_process");
 
 const { config } = require("./config");
 const { TrackerClient } = require("./trackerClient");
@@ -14,6 +16,17 @@ const PARSE_JOB_TTL_MS = 30 * 60 * 1000;
 const authSessions = new Map();
 const AUTH_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 const AUTH_COOKIE_NAME = "tv_session";
+const RAW_CONFIGURED_UPDATE_SCRIPT_PATH = String(process.env.APP_UPDATE_SCRIPT_PATH || "").trim();
+const DEFAULT_UPDATE_SCRIPT_PATH = path.resolve(path.join(__dirname, "..", "update.sh"));
+const LEGACY_UPDATE_SCRIPT_PATH = path.resolve(path.join(__dirname, "..", "udate.sh"));
+const updateState = {
+  running: false,
+  startedAt: null,
+  finishedAt: null,
+  lastExitCode: null,
+  lastSignal: null,
+  lastError: null
+};
 const categoryStore = createCategoryStore(path.join(__dirname, "..", "data", "categories.json"));
 const savedSearchStore = createSavedSearchStore(path.join(__dirname, "..", "data", "saved-searches.json"));
 
@@ -161,6 +174,86 @@ function credentialsMatchTracker(username, password) {
   return safeEquals(username, config.tracker.username) && safeEquals(password, config.tracker.password);
 }
 
+function toAbsolutePath(rawPath) {
+  const normalized = String(rawPath || "").trim();
+  if (!normalized) {
+    return "";
+  }
+
+  return path.resolve(normalized);
+}
+
+function isExistingFile(filePath) {
+  try {
+    return fs.statSync(filePath).isFile();
+  } catch (error) {
+    return false;
+  }
+}
+
+function resolveUpdateScriptPath() {
+  const configuredPath = toAbsolutePath(RAW_CONFIGURED_UPDATE_SCRIPT_PATH);
+  if (configuredPath && isExistingFile(configuredPath)) {
+    return configuredPath;
+  }
+
+  if (isExistingFile(DEFAULT_UPDATE_SCRIPT_PATH)) {
+    return DEFAULT_UPDATE_SCRIPT_PATH;
+  }
+
+  // Backward-compatibility for older typo in script name.
+  if (isExistingFile(LEGACY_UPDATE_SCRIPT_PATH)) {
+    return LEGACY_UPDATE_SCRIPT_PATH;
+  }
+
+  return configuredPath || DEFAULT_UPDATE_SCRIPT_PATH;
+}
+
+function isUpdateScriptAvailable() {
+  const scriptPath = resolveUpdateScriptPath();
+  return Boolean(scriptPath) && isExistingFile(scriptPath);
+}
+
+function createUpdateStatusPayload() {
+  const scriptPath = resolveUpdateScriptPath();
+  const enabled = isUpdateScriptAvailable();
+  return {
+    enabled,
+    running: updateState.running,
+    startedAt: updateState.startedAt,
+    finishedAt: updateState.finishedAt,
+    lastExitCode: updateState.lastExitCode,
+    lastSignal: updateState.lastSignal,
+    lastError: updateState.lastError,
+    scriptPath: enabled ? scriptPath : ""
+  };
+}
+
+function spawnUpdateScript() {
+  const scriptPath = resolveUpdateScriptPath();
+  if (!isExistingFile(scriptPath)) {
+    throw new Error("Update script not found.");
+  }
+
+  if (process.platform === "win32") {
+    return spawn(
+      "powershell.exe",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
+      {
+        cwd: path.dirname(scriptPath),
+        detached: true,
+        stdio: "ignore"
+      }
+    );
+  }
+
+  return spawn("/bin/sh", [scriptPath], {
+    cwd: path.dirname(scriptPath),
+    detached: true,
+    stdio: "ignore"
+  });
+}
+
 function resolveHardMaxReleases() {
   const parsed = Number.parseInt(String(config.tracker.hardMaxReleases || ""), 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 700;
@@ -303,7 +396,13 @@ function cleanupParseJobs() {
 app.use("/api", (request, response, next) => {
   cleanupAuthSessions();
   const path = String(request.path || "");
-  if (path === "/health" || path === "/auth/login" || path === "/auth/status" || path === "/auth/logout") {
+  if (
+    path === "/health" ||
+    path === "/version" ||
+    path === "/auth/login" ||
+    path === "/auth/status" ||
+    path === "/auth/logout"
+  ) {
     return next();
   }
 
@@ -319,6 +418,12 @@ app.use("/api", (request, response, next) => {
 
 app.get("/api/health", (_, response) => {
   response.json({ status: "ok" });
+});
+
+app.get("/api/version", (_, response) => {
+  response.json({
+    version: config.app.version
+  });
 });
 
 app.get("/api/auth/status", (request, response) => {
@@ -374,6 +479,68 @@ app.post("/api/auth/logout", (request, response) => {
   });
 });
 
+app.get("/api/admin/update", (_, response) => {
+  response.json(createUpdateStatusPayload());
+});
+
+app.post("/api/admin/update", (request, response) => {
+  if (!isUpdateScriptAvailable()) {
+    return response.status(404).json({
+      error: "Update script not found. Set APP_UPDATE_SCRIPT_PATH or place update.sh in project root."
+    });
+  }
+
+  if (updateState.running) {
+    return response.status(409).json({
+      error: "Update is already running.",
+      ...createUpdateStatusPayload()
+    });
+  }
+
+  try {
+    const child = spawnUpdateScript();
+
+    updateState.running = true;
+    updateState.startedAt = Date.now();
+    updateState.finishedAt = null;
+    updateState.lastExitCode = null;
+    updateState.lastSignal = null;
+    updateState.lastError = null;
+
+    child.on("error", (error) => {
+      updateState.running = false;
+      updateState.finishedAt = Date.now();
+      updateState.lastError = error?.message || "Failed to start update process.";
+      updateState.lastExitCode = 1;
+      updateState.lastSignal = null;
+    });
+
+    child.on("exit", (code, signal) => {
+      updateState.running = false;
+      updateState.finishedAt = Date.now();
+      updateState.lastExitCode = Number.isInteger(code) ? code : null;
+      updateState.lastSignal = signal || null;
+      if (Number.isInteger(code) && code !== 0) {
+        updateState.lastError = `Update script exited with code ${code}.`;
+      }
+    });
+
+    child.unref();
+  } catch (error) {
+    updateState.running = false;
+    updateState.finishedAt = Date.now();
+    updateState.lastError = error?.message || "Failed to start update process.";
+    return response.status(500).json({
+      error: updateState.lastError
+    });
+  }
+
+  return response.status(202).json({
+    status: "started",
+    ...createUpdateStatusPayload()
+  });
+});
+
 app.get("/api/categories", (_, response) => {
   response.json({
     categories: categoryStore.list()
@@ -388,6 +555,9 @@ app.get("/api/saved-searches", (_, response) => {
 
 app.get("/api/client-config", (_, response) => {
   response.json({
+    app: {
+      version: config.app.version
+    },
     tracker: {
       defaultSourceUrl: resolveDefaultSourceUrl(),
       maxReleases: config.tracker.maxReleases,
@@ -569,5 +739,5 @@ app.get("*", (_, response) => {
 
 app.listen(config.app.port, () => {
   // Keep startup logs short and deterministic for container logs.
-  console.log(`TrackerView started on port ${config.app.port}`);
+  console.log(`TrackerView ${config.app.version} started on port ${config.app.port}`);
 });

@@ -23,6 +23,14 @@ TrackerView — веб-приложение для парсинга страни
 - Frontend: статический HTML/CSS + vanilla JS.
 - Хранилище состояния: JSON-файлы в `data/`.
 
+## Версионирование
+
+- Формат версии: `1.0.YYMMDDHHMM`.
+- Часовой пояс для штампа времени: `UTC+4`.
+- Значение `1.0` фиксированное.
+- Третья часть версии вычисляется из времени последнего git-коммита (head) при запуске приложения.
+- Можно задать явную версию через `APP_VERSION` (например `1.0.2603111805`).
+
 ## Требования
 
 - Node.js `>=20`
@@ -209,6 +217,8 @@ nohup /var/packages/Node.js_v22/target/usr/local/bin/node src/server.js >> /volu
 | `TRACKER_TEXT_SEARCH_PATH` | `tracker.php` | нет | Путь/URL для текстового поиска (резолвится от `TRACKER_BASE_URL`) |
 | `TRACKER_USERNAME` | `` | да | Логин трекера |
 | `TRACKER_PASSWORD` | `` | да | Пароль трекера |
+| `APP_UPDATE_SCRIPT_PATH` | `./update.sh` | нет | Путь до скрипта обновления, вызываемого кнопкой `Update app` |
+| `APP_VERSION` | `` | нет | Явная версия приложения в формате `1.0.YYMMDDHHMM` (если пусто, вычисляется автоматически из git head) |
 | `TRACKER_MAX_RELEASES` | `80` | нет | Значение `maxReleases` по умолчанию |
 | `TRACKER_HARD_MAX_RELEASES` | `700` | нет | Верхний предел `maxReleases` для запросов |
 | `TRACKER_CONCURRENCY` | `4` | нет | Параллелизм парсинга страниц релизов |
@@ -247,6 +257,10 @@ nohup /var/packages/Node.js_v22/target/usr/local/bin/node src/server.js >> /volu
 
 Проверка доступности сервера.
 
+### `GET /api/version`
+
+Публичный маршрут для получения версии приложения.
+
 ### `GET /api/auth/status`
 
 Проверка текущей сессии авторизации в приложении.
@@ -261,9 +275,21 @@ nohup /var/packages/Node.js_v22/target/usr/local/bin/node src/server.js >> /volu
 
 Завершение текущей сессии.
 
+### `GET /api/admin/update`
+
+Статус кнопки обновления:
+- `enabled` — найден ли скрипт обновления.
+- `running` — запущено ли обновление сейчас.
+
+### `POST /api/admin/update`
+
+Запускает скрипт обновления (`APP_UPDATE_SCRIPT_PATH`) в фоне.
+Маршрут защищен авторизацией приложения.
+
 ### `GET /api/client-config`
 
 Конфигурация для фронтенда:
+- `app.version`
 - `tracker.defaultSourceUrl`
 - `tracker.maxReleases`
 - `tracker.hardMaxReleases`

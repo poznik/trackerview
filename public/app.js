@@ -6,6 +6,9 @@ const authPasswordInput = document.getElementById("auth-password");
 const authSubmitButton = document.getElementById("auth-submit");
 const authStatusNode = document.getElementById("auth-status");
 const authUserNode = document.getElementById("auth-user");
+const appVersionNode = document.getElementById("app-version");
+const updateButton = document.getElementById("update-btn");
+const updateStatusNode = document.getElementById("update-status");
 const logoutButton = document.getElementById("logout-btn");
 const form = document.getElementById("load-form");
 const sourceInput = document.getElementById("source-url");
@@ -32,6 +35,7 @@ const DEFAULT_SOURCE_PLACEHOLDER = "URL or text for search";
 const hoverPanel = document.createElement("div");
 const hoverPanelImage = document.createElement("img");
 const clientConfig = {
+  appVersion: "1.0.0000000000",
   defaultSourceUrl: "",
   maxReleases: 80,
   hardMaxReleases: 700
@@ -68,6 +72,7 @@ let allReleases = [];
 let savedSearches = [];
 let lastSuccessfulSearchUrl = "";
 let isAuthenticated = false;
+let isUpdateAvailable = false;
 const categoryState = new Map();
 
 hoverPanel.className = "poster-hover-panel";
@@ -77,6 +82,34 @@ document.body.appendChild(hoverPanel);
 function setAuthStatus(message, isError = false) {
   authStatusNode.textContent = String(message || "");
   authStatusNode.classList.toggle("error", Boolean(isError));
+}
+
+function setAppVersion(version) {
+  const normalized = String(version || "").trim();
+  if (!/^1\.0\.\d{10}$/.test(normalized)) {
+    return;
+  }
+
+  clientConfig.appVersion = normalized;
+  appVersionNode.textContent = `Version ${normalized}`;
+}
+
+function setUpdateStatus(message, isError = false) {
+  const text = String(message || "");
+  updateStatusNode.textContent = text;
+  updateStatusNode.classList.toggle("error", Boolean(isError));
+  updateStatusNode.classList.toggle("hidden", !text);
+}
+
+function setUpdateButtonVisible(visible) {
+  updateButton.classList.toggle("hidden", !visible);
+}
+
+function resetUpdateUiState() {
+  isUpdateAvailable = false;
+  updateButton.disabled = false;
+  setUpdateButtonVisible(false);
+  setUpdateStatus("");
 }
 
 function resetDataState() {
@@ -103,6 +136,7 @@ function setAuthenticatedUi(authenticated, username = "") {
 
   if (signedIn) {
     authUserNode.textContent = `Signed in as ${username}`;
+    setUpdateButtonVisible(isUpdateAvailable);
     setAuthStatus("");
     return;
   }
@@ -110,6 +144,7 @@ function setAuthenticatedUi(authenticated, username = "") {
   authUserNode.textContent = "";
   authPasswordInput.value = "";
   setSaveSearchButtonVisible(false);
+  resetUpdateUiState();
   setFiltersExpanded(false);
   hidePosterPreview();
   if (saveSearchDialog.open) {
@@ -163,6 +198,24 @@ async function loginWithTrackerCredentials(username, password) {
 
 async function logoutCurrentSession() {
   return fetchJson("/api/auth/logout", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json"
+    }
+  });
+}
+
+async function loadPublicAppVersion() {
+  const payload = await fetchJson("/api/version");
+  setAppVersion(payload?.version);
+}
+
+async function loadUpdateControlStatus() {
+  return fetchJson("/api/admin/update");
+}
+
+async function startApplicationUpdate() {
+  return fetchJson("/api/admin/update", {
     method: "POST",
     headers: {
       "content-type": "application/json"
@@ -748,6 +801,7 @@ function updateTableView() {
 
 async function loadClientConfig() {
   const payload = await fetchJson("/api/client-config");
+  setAppVersion(payload?.app?.version);
 
   const tracker = payload?.tracker || {};
   const defaultSourceUrl = normalizeSearchUrl(tracker.defaultSourceUrl);
@@ -876,6 +930,47 @@ function openSaveSearchDialog() {
     });
 }
 
+function applyUpdateControlStatus(payload) {
+  const enabled = Boolean(payload?.enabled);
+  const running = Boolean(payload?.running);
+  const lastError = String(payload?.lastError || "").trim();
+  const lastExitCode =
+    Number.isInteger(payload?.lastExitCode) || payload?.lastExitCode === 0
+      ? payload.lastExitCode
+      : null;
+
+  isUpdateAvailable = enabled;
+  setUpdateButtonVisible(isAuthenticated && enabled);
+  updateButton.disabled = !enabled || running;
+
+  if (!enabled) {
+    setUpdateStatus("");
+    return;
+  }
+
+  if (running) {
+    setUpdateStatus("Update is running...");
+    return;
+  }
+
+  if (lastError) {
+    setUpdateStatus(`Last update error: ${lastError}`, true);
+    return;
+  }
+
+  if (Number.isInteger(lastExitCode) && lastExitCode !== 0) {
+    setUpdateStatus(`Last update exited with code ${lastExitCode}.`, true);
+    return;
+  }
+
+  setUpdateStatus("");
+}
+
+async function refreshUpdateControlStatus() {
+  const payload = await loadUpdateControlStatus();
+  applyUpdateControlStatus(payload);
+}
+
 async function initializeAuthenticatedApp() {
   loadButton.disabled = true;
   setProgress(0, 0);
@@ -901,6 +996,12 @@ async function initializeAuthenticatedApp() {
     await loadSavedSearches();
   } catch (error) {
     renderSavedSearches();
+  }
+
+  try {
+    await refreshUpdateControlStatus();
+  } catch (error) {
+    resetUpdateUiState();
   }
 
   loadButton.disabled = !isAuthenticated;
@@ -1151,6 +1252,33 @@ function submitAuthFormFromEnter(event) {
 authUsernameInput.addEventListener("keydown", submitAuthFormFromEnter);
 authPasswordInput.addEventListener("keydown", submitAuthFormFromEnter);
 
+updateButton.addEventListener("click", async () => {
+  if (!isAuthenticated || !isUpdateAvailable || updateButton.disabled) {
+    return;
+  }
+
+  const shouldStart = window.confirm(
+    "Start application update now? The app will restart and may be unavailable for a short time."
+  );
+  if (!shouldStart) {
+    return;
+  }
+
+  updateButton.disabled = true;
+  setUpdateStatus("Starting update...");
+
+  try {
+    const payload = await startApplicationUpdate();
+    applyUpdateControlStatus(payload);
+    setStatus("Update started.");
+    setUpdateStatus("Update started. Wait for restart and refresh this page.");
+  } catch (error) {
+    updateButton.disabled = false;
+    setUpdateStatus(error.message || "Failed to start update.", true);
+    setStatus(error.message || "Failed to start update.", true);
+  }
+});
+
 logoutButton.addEventListener("click", async () => {
   logoutButton.disabled = true;
   try {
@@ -1169,6 +1297,12 @@ logoutButton.addEventListener("click", async () => {
 });
 
 (async () => {
+  try {
+    await loadPublicAppVersion();
+  } catch (error) {
+    // Keep placeholder version if public endpoint is unavailable.
+  }
+
   try {
     const status = await loadAuthStatus();
     if (status?.authenticated) {

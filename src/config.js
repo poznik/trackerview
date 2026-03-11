@@ -1,4 +1,5 @@
 require("dotenv").config();
+const { resolveAppVersion } = require("./version");
 
 function toNumber(value, fallback) {
   const parsed = Number.parseInt(String(value ?? ""), 10);
@@ -7,7 +8,8 @@ function toNumber(value, fallback) {
 
 const config = {
   app: {
-    port: toNumber(process.env.PORT, 3000)
+    port: toNumber(process.env.PORT, 3000),
+    version: resolveAppVersion()
   },
   tracker: {
     baseUrl: process.env.TRACKER_BASE_URL || "https://tracker.example/forum",
