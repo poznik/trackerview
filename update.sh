@@ -56,6 +56,9 @@ git fetch --prune origin "$GIT_BRANCH"
 git checkout -B "$GIT_BRANCH" "origin/${GIT_BRANCH}"
 git reset --hard "origin/${GIT_BRANCH}"
 
+log "Ensuring old TrackerView process is stopped"
+sh "${APP_DIR}/scripts/nas-stop.sh" || true
+
 log "Installing production dependencies"
 npm ci --omit=dev
 
