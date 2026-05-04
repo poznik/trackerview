@@ -371,6 +371,29 @@ input[type="number"] {
   color: var(--text-muted);
 }
 
+.filter-search-input {
+  width: 100%;
+  max-width: 360px;
+  height: 30px;
+  margin: 0 0 8px;
+  padding: 5px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+.filter-search-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(106, 142, 255, 0.18);
+}
+.filter-search-input:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .chip-group {
   display: flex;
   flex-wrap: wrap;

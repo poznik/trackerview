@@ -28,6 +28,7 @@ const statusNode = document.getElementById("status");
 const summaryNode = document.getElementById("summary");
 const progressNode = document.getElementById("progress-counter");
 const tagFiltersTitleNode = document.getElementById("tag-filters-title");
+const tagFilterSearchInput = document.getElementById("tag-filter-search");
 const tagFiltersNode = document.getElementById("tag-filters");
 const qualityFiltersTitleNode = document.getElementById("quality-filters-title");
 const qualityFiltersNode = document.getElementById("quality-filters");
@@ -64,6 +65,8 @@ const DEFAULT_UI_TEXTS = {
   sort_date: "Date",
   tag_filters_title: "Tags",
   tag_filters_empty: "Tags will appear after loading releases.",
+  tag_filter_search_placeholder: "Search tags",
+  tag_filters_no_matches: "No tags match the search.",
   tag_favorite_add: "Add to favorites",
   tag_favorite_remove: "Remove from favorites",
   quality_filters_title: "Quality",
@@ -140,6 +143,7 @@ const categoryState = new Map();
 const tagFilterState = new Map();
 const qualityFilterState = new Map();
 let availableQualityOptions = [];
+let tagFilterSearchQuery = "";
 const downloadedReleaseKeys = new Set();
 const selectedReleaseVariantByGroupKey = new Map();
 let lastFocusBeforeDrawer = null;
@@ -218,6 +222,14 @@ function applyUiTexts() {
     "tag_filters_title",
     DEFAULT_UI_TEXTS.tag_filters_title
   );
+  tagFilterSearchInput.placeholder = resolveUiText(
+    "tag_filter_search_placeholder",
+    DEFAULT_UI_TEXTS.tag_filter_search_placeholder
+  );
+  tagFilterSearchInput.setAttribute(
+    "aria-label",
+    resolveUiText("tag_filter_search_placeholder", DEFAULT_UI_TEXTS.tag_filter_search_placeholder)
+  );
   qualityFiltersTitleNode.textContent = resolveUiText(
     "quality_filters_title",
     DEFAULT_UI_TEXTS.quality_filters_title
@@ -293,6 +305,8 @@ function resetDataState() {
   availableQualityOptions = [];
   downloadedReleaseKeys.clear();
   sourceInput.value = "";
+  tagFilterSearchQuery = "";
+  tagFilterSearchInput.value = "";
   savedSearchesSelect.value = "";
   summaryNode.textContent = "";
   setProgress(0, 0);
@@ -1784,18 +1798,32 @@ function mergeTagsIntoState(tags) {
 
 function renderTagFilters() {
   tagFiltersNode.innerHTML = "";
-  const tags = Array.from(tagFilterState.entries()).sort((left, right) =>
+  const allTags = Array.from(tagFilterState.entries()).sort((left, right) =>
     getTagState(left[0]).favorite !== getTagState(right[0]).favorite
       ? getTagState(left[0]).favorite
         ? -1
         : 1
       : left[0].localeCompare(right[0], "ru", { sensitivity: "base" })
   );
+  const normalizedSearch = tagFilterSearchQuery.trim().toLocaleLowerCase("ru");
+  const tags = normalizedSearch
+    ? allTags.filter(([name]) => name.toLocaleLowerCase("ru").includes(normalizedSearch))
+    : allTags;
+
+  tagFilterSearchInput.disabled = allTags.length === 0;
+
+  if (allTags.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "chip-empty";
+    empty.textContent = resolveUiText("tag_filters_empty", DEFAULT_UI_TEXTS.tag_filters_empty);
+    tagFiltersNode.appendChild(empty);
+    return;
+  }
 
   if (tags.length === 0) {
     const empty = document.createElement("p");
     empty.className = "chip-empty";
-    empty.textContent = resolveUiText("tag_filters_empty", DEFAULT_UI_TEXTS.tag_filters_empty);
+    empty.textContent = resolveUiText("tag_filters_no_matches", DEFAULT_UI_TEXTS.tag_filters_no_matches);
     tagFiltersNode.appendChild(empty);
     return;
   }
@@ -2293,6 +2321,11 @@ sourceInput.addEventListener("input", () => {
 filtersToggleButton.addEventListener("click", () => {
   if (!isAuthenticated) return;
   setFiltersExpanded(filtersPanel.hidden);
+});
+
+tagFilterSearchInput.addEventListener("input", () => {
+  tagFilterSearchQuery = tagFilterSearchInput.value.trim();
+  renderTagFilters();
 });
 
 sortDateButton.addEventListener("click", () => {

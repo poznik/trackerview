@@ -18,6 +18,8 @@
   "filters": "Фильтры",
   "tag_filters_title": "Теги",
   "tag_filters_empty": "Теги появятся после загрузки релизов.",
+  "tag_filter_search_placeholder": "Поиск по тегам",
+  "tag_filters_no_matches": "Нет тегов под этот поиск.",
   "tag_favorite_add": "Добавить в избранное",
   "tag_favorite_remove": "Убрать из избранного",
   "status_idle": "Ожидание",

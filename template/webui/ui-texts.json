@@ -1,0 +1,19 @@
+{
+  "title": "Web UI Template",
+  "version": "0.0.0",
+  "source_placeholder": "Ссылка или текст запроса",
+  "saved_views": "Сохраненное",
+  "load": "Загрузить",
+  "stop": "Остановить",
+  "filters": "Фильтры",
+  "tags": "Теги",
+  "tag_search": "Поиск по тегам",
+  "tag_search_empty": "Нет тегов под этот поиск.",
+  "states": "Состояние",
+  "categories": "Категории",
+  "status_idle": "Ожидание",
+  "status_done": "Готово",
+  "empty": "Нет элементов под выбранные фильтры.",
+  "favorite_add": "Добавить в избранное",
+  "favorite_remove": "Убрать из избранного"
+}
