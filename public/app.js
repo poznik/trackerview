@@ -1131,7 +1131,7 @@ function createThumbnailsStrip(release) {
     image.referrerPolicy = "no-referrer";
 
     image.addEventListener("mouseenter", (event) =>
-      showImagePreview(event, image, previewUrl || fullUrl || thumbUrl, 6, false)
+      showImagePreview(event, image, previewUrl || fullUrl || thumbUrl, 6, true)
     );
     image.addEventListener("mousemove", (event) => movePosterPreview(event));
     image.addEventListener("mouseleave", () => hidePosterPreview());

@@ -94,9 +94,86 @@ function contentTypeForFileName(fileName) {
   return CONTENT_TYPES[extension] || "application/octet-stream";
 }
 
+function isImageContentType(value) {
+  const contentType = String(value || "").toLowerCase();
+  return Boolean(contentType.startsWith("image/") || contentType.includes("octet-stream"));
+}
+
 function normalizePriority(rawPriority) {
   const value = String(rawPriority || "").trim().toLowerCase();
   return Object.prototype.hasOwnProperty.call(PRIORITY_VALUES, value) ? value : "rest";
+}
+
+function isFastpicDomainUrl(rawUrl) {
+  const parsed = parseSafeUrl(rawUrl);
+  if (!parsed) {
+    return false;
+  }
+  return /(^|\.)fastpic\.org$/i.test(parsed.hostname);
+}
+
+function isFastpicImageUrl(rawUrl) {
+  return isFastpicDomainUrl(rawUrl) && isSupportedImageUrl(rawUrl);
+}
+
+function isFastpicBigImageUrl(rawUrl) {
+  const parsed = parseSafeUrl(rawUrl);
+  if (!parsed || !isFastpicImageUrl(parsed.toString())) {
+    return false;
+  }
+  return /^\/big\//i.test(parsed.pathname);
+}
+
+function buildFastpicViewUrlFromBigImage(rawUrl) {
+  const parsed = parseSafeUrl(rawUrl);
+  if (!parsed || !isFastpicBigImageUrl(parsed.toString())) {
+    return "";
+  }
+
+  const hostMatch = parsed.hostname.match(/^i(\d+)\.fastpic\.org$/i);
+  const pathMatch = parsed.pathname.match(
+    /^\/big\/(\d{4})\/(\d{4})\/[A-Za-z0-9_-]+\/([A-Za-z0-9_-]+\.(?:jpg|jpeg|png|webp|gif|bmp|avif))$/i
+  );
+  if (!hostMatch || !pathMatch) {
+    return "";
+  }
+
+  return `https://fastpic.org/view/${hostMatch[1]}/${pathMatch[1]}/${pathMatch[2]}/${pathMatch[3]}.html`;
+}
+
+function extractFastpicDirectImageUrlFromViewPageHtml(viewUrl, html) {
+  const rawHtml = String(html || "");
+  const matches = rawHtml.match(/https?:\/\/i\d+\.fastpic\.org\/big\/[^"'<>\\\s]+/gi) || [];
+  for (const candidate of matches) {
+    const normalized = normalizeImageUrl(candidate.replace(/&amp;/gi, "&"));
+    if (isFastpicBigImageUrl(normalized)) {
+      return normalized;
+    }
+  }
+
+  const srcMatches = rawHtml.match(/src\s*=\s*["']([^"']+)["']/gi) || [];
+  for (const rawMatch of srcMatches) {
+    const match = rawMatch.match(/src\s*=\s*["']([^"']+)["']/i);
+    let src = "";
+    try {
+      src = match ? normalizeImageUrl(new URL(match[1].replace(/&amp;/gi, "&"), viewUrl).toString()) : "";
+    } catch (error) {
+      src = "";
+    }
+    if (isFastpicBigImageUrl(src)) {
+      return src;
+    }
+  }
+
+  return "";
+}
+
+async function cancelResponseBody(response) {
+  try {
+    await response?.body?.cancel?.();
+  } catch (error) {
+    // Best-effort connection cleanup only.
+  }
 }
 
 async function fileExists(filePath) {
@@ -240,22 +317,59 @@ function createImageCache(options = {}) {
     });
   }
 
+  async function fetchImageResponse(rawUrl, signal) {
+    return fetch(rawUrl, {
+      headers: {
+        "user-agent": userAgent,
+        accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
+      },
+      signal
+    });
+  }
+
+  async function resolveFastpicSignedImageUrl(rawUrl, signal) {
+    const viewUrl = buildFastpicViewUrlFromBigImage(rawUrl);
+    if (!viewUrl) {
+      return "";
+    }
+
+    const response = await fetch(viewUrl, {
+      headers: {
+        "user-agent": userAgent,
+        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+      },
+      signal
+    });
+    if (!response.ok) {
+      return "";
+    }
+
+    const html = await response.text();
+    return extractFastpicDirectImageUrlFromViewPageHtml(viewUrl, html);
+  }
+
   async function downloadImage(normalizedUrl, targetPath, fileName, priority = "rest") {
     const startedAt = diagnostics.startTimer();
     const tmpPath = `${targetPath}.tmp-${process.pid}-${crypto.randomBytes(8).toString("hex")}`;
     const controller = new AbortController();
     const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
     let bytes = 0;
+    let effectiveUrl = normalizedUrl;
 
     try {
       await fs.promises.mkdir(cacheDir, { recursive: true });
-      const response = await fetch(normalizedUrl, {
-        headers: {
-          "user-agent": userAgent,
-          accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
-        },
-        signal: controller.signal
-      });
+      let response = await fetchImageResponse(normalizedUrl, controller.signal);
+      let contentType = String(response.headers.get("content-type") || "").toLowerCase();
+
+      if (response.ok && !isImageContentType(contentType) && isFastpicBigImageUrl(normalizedUrl)) {
+        await cancelResponseBody(response);
+        const signedUrl = await resolveFastpicSignedImageUrl(normalizedUrl, controller.signal);
+        if (signedUrl && signedUrl !== normalizedUrl) {
+          effectiveUrl = signedUrl;
+          response = await fetchImageResponse(signedUrl, controller.signal);
+          contentType = String(response.headers.get("content-type") || "").toLowerCase();
+        }
+      }
 
       if (!response.ok || !response.body) {
         throw new Error(`Image download failed with HTTP ${response.status}.`);
@@ -266,8 +380,7 @@ function createImageCache(options = {}) {
         throw new Error(`Image is too large (${contentLength} bytes).`);
       }
 
-      const contentType = String(response.headers.get("content-type") || "").toLowerCase();
-      if (contentType && !contentType.startsWith("image/") && !contentType.includes("octet-stream")) {
+      if (contentType && !isImageContentType(contentType)) {
         throw new Error(`Unexpected image content type: ${contentType}.`);
       }
 
@@ -290,6 +403,7 @@ function createImageCache(options = {}) {
       await fs.promises.rename(tmpPath, targetPath);
       diagnostics.log("image_cache.download.done", {
         imageUrl: normalizedUrl,
+        effectiveImageUrl: effectiveUrl === normalizedUrl ? "" : effectiveUrl,
         fileName,
         priority,
         bytes,
@@ -303,6 +417,7 @@ function createImageCache(options = {}) {
       }
       diagnostics.log("image_cache.download.error", {
         imageUrl: normalizedUrl,
+        effectiveImageUrl: effectiveUrl === normalizedUrl ? "" : effectiveUrl,
         fileName,
         priority,
         bytes,

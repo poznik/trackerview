@@ -155,3 +155,71 @@ test("image cache downloads cache misses by priority", async () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 });
+
+test("image cache resolves signed Fastpic big image URL when unsigned URL returns HTML", async () => {
+  const originalFetch = global.fetch;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "trackerview-pics-"));
+  const unsignedUrl =
+    "https://i127.fastpic.org/big/2026/0504/58/_a75ebb87ef9f4fc2f2b73efc77f47e58.jpg";
+  const viewUrl =
+    "https://fastpic.org/view/127/2026/0504/_a75ebb87ef9f4fc2f2b73efc77f47e58.jpg.html";
+  const signedUrl = `${unsignedUrl}?md5=test&amp;expires=1777896000`;
+  const calls = [];
+
+  global.fetch = async (url) => {
+    const value = String(url);
+    calls.push(value);
+    if (value === unsignedUrl) {
+      return new Response("<html>not an image</html>", {
+        headers: { "content-type": "text/html; charset=UTF-8" }
+      });
+    }
+    if (value === viewUrl) {
+      return new Response(`<img src="${signedUrl}">`, {
+        headers: { "content-type": "text/html; charset=UTF-8" }
+      });
+    }
+    if (value === signedUrl.replace(/&amp;/g, "&")) {
+      return new Response(Buffer.from([4, 5, 6]), {
+        headers: { "content-type": "image/jpeg" }
+      });
+    }
+    throw new Error(`Unexpected URL: ${value}`);
+  };
+
+  try {
+    const cache = createImageCache({ cacheDir: tempDir });
+    const fileName = fileNameForImageUrl(normalizeImageUrl(unsignedUrl));
+    const headers = {};
+    let sentFile = "";
+    const response = {
+      setHeader(name, value) {
+        headers[name] = value;
+      },
+      sendFile(filePath) {
+        sentFile = filePath;
+        return this;
+      },
+      status(code) {
+        this.statusCode = code;
+        return this;
+      },
+      send(message) {
+        this.message = message;
+        return this;
+      }
+    };
+
+    await cache.handleRequest(
+      { params: { fileName }, query: { u: unsignedUrl, p: "preview" } },
+      response
+    );
+
+    assert.deepEqual(calls, [unsignedUrl, viewUrl, signedUrl.replace(/&amp;/g, "&")]);
+    assert.equal(headers["X-Image-Cache"], "MISS");
+    assert.equal(await fs.readFile(sentFile, "hex"), "040506");
+  } finally {
+    global.fetch = originalFetch;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
