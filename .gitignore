@@ -1,9 +1,12 @@
 node_modules
 .env
 .env.local
+config.toml
+release/
 npm-debug.log*
 .DS_Store
 data/categories.json
 data/saved-searches.json
 data/releases-cache.json
 data/quality-filters.json
+data/tags.json

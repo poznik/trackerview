@@ -9,6 +9,7 @@ const { TrackerClient } = require("./trackerClient");
 const { parseReleasePage, parseReleasesFromCollection, enrichReleaseScreenshots } = require("./parser");
 const { createCategoryStore } = require("./categoryStore");
 const { createSavedSearchStore, normalizeSearchName, normalizeSearchUrl } = require("./savedSearchStore");
+const { createReleaseCacheStore } = require("./releaseCacheStore");
 
 const app = express();
 const parseJobs = new Map();
@@ -16,9 +17,12 @@ const PARSE_JOB_TTL_MS = 30 * 60 * 1000;
 const authSessions = new Map();
 const AUTH_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 const AUTH_COOKIE_NAME = "tv_session";
-const RAW_CONFIGURED_UPDATE_SCRIPT_PATH = String(process.env.APP_UPDATE_SCRIPT_PATH || "").trim();
+const LOGIN_RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const LOGIN_RATE_LIMIT_MAX_ATTEMPTS = 5;
+const LOGIN_RATE_LIMIT_BLOCK_MS = 15 * 60 * 1000;
+const loginAttemptsByIp = new Map();
+const RAW_CONFIGURED_UPDATE_SCRIPT_PATH = String(config.app.updateScriptPath || "").trim();
 const DEFAULT_UPDATE_SCRIPT_PATH = path.resolve(path.join(__dirname, "..", "update.sh"));
-const LEGACY_UPDATE_SCRIPT_PATH = path.resolve(path.join(__dirname, "..", "udate.sh"));
 const updateState = {
   running: false,
   startedAt: null,
@@ -29,8 +33,24 @@ const updateState = {
 };
 const categoryStore = createCategoryStore(path.join(__dirname, "..", "data", "categories.json"));
 const qualityFilterStore = createCategoryStore(path.join(__dirname, "..", "data", "quality-filters.json"));
+const tagStore = createCategoryStore(path.join(__dirname, "..", "data", "tags.json"));
 const savedSearchStore = createSavedSearchStore(path.join(__dirname, "..", "data", "saved-searches.json"));
+const releaseCacheStore = createReleaseCacheStore(path.join(__dirname, "..", "data", "releases-cache.json"));
 const MAX_DOWNLOAD_FILE_NAME_LENGTH = 180;
+
+app.set("trust proxy", true);
+
+app.use((_, response, next) => {
+  response.setHeader("X-Content-Type-Options", "nosniff");
+  response.setHeader("X-Frame-Options", "SAMEORIGIN");
+  response.setHeader("Referrer-Policy", "no-referrer");
+  response.setHeader("Permissions-Policy", "interest-cohort=()");
+  response.setHeader(
+    "Content-Security-Policy",
+    "default-src 'self'; img-src 'self' http: https: data: blob:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'self'"
+  );
+  next();
+});
 
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "..", "public")));
@@ -109,12 +129,53 @@ function cleanupAuthSessions() {
 function createAuthSession(username) {
   cleanupAuthSessions();
   const token = crypto.randomBytes(32).toString("hex");
+  const csrfToken = crypto.randomBytes(32).toString("hex");
   const expiresAt = Date.now() + AUTH_SESSION_TTL_MS;
   authSessions.set(token, {
     username,
-    expiresAt
+    expiresAt,
+    csrfToken
   });
-  return { token, expiresAt };
+  return { token, expiresAt, csrfToken };
+}
+
+function getClientIp(request) {
+  const forwarded = String(request.headers["x-forwarded-for"] || "")
+    .split(",")[0]
+    .trim();
+  return forwarded || request.ip || request.socket?.remoteAddress || "unknown";
+}
+
+function checkLoginRateLimit(ip) {
+  const now = Date.now();
+  const entry = loginAttemptsByIp.get(ip);
+
+  if (entry?.blockedUntil && entry.blockedUntil > now) {
+    return {
+      ok: false,
+      retryAfterSeconds: Math.ceil((entry.blockedUntil - now) / 1000)
+    };
+  }
+
+  if (!entry || entry.windowStart + LOGIN_RATE_LIMIT_WINDOW_MS < now) {
+    loginAttemptsByIp.set(ip, { windowStart: now, count: 1, blockedUntil: 0 });
+    return { ok: true };
+  }
+
+  entry.count += 1;
+  if (entry.count > LOGIN_RATE_LIMIT_MAX_ATTEMPTS) {
+    entry.blockedUntil = now + LOGIN_RATE_LIMIT_BLOCK_MS;
+    return {
+      ok: false,
+      retryAfterSeconds: Math.ceil(LOGIN_RATE_LIMIT_BLOCK_MS / 1000)
+    };
+  }
+
+  return { ok: true };
+}
+
+function resetLoginRateLimit(ip) {
+  loginAttemptsByIp.delete(ip);
 }
 
 function resolveAuthSession(request) {
@@ -363,11 +424,6 @@ function resolveUpdateScriptPath() {
     return DEFAULT_UPDATE_SCRIPT_PATH;
   }
 
-  // Backward-compatibility for older typo in script name.
-  if (isExistingFile(LEGACY_UPDATE_SCRIPT_PATH)) {
-    return LEGACY_UPDATE_SCRIPT_PATH;
-  }
-
   return configuredPath || DEFAULT_UPDATE_SCRIPT_PATH;
 }
 
@@ -430,6 +486,28 @@ function resolveDefaultSourceUrl() {
   return normalizeUrl(config.tracker.baseUrl);
 }
 
+function resolveConfiguredTrackerUrl(rawValue) {
+  const raw = String(rawValue || "").trim();
+  if (!raw) {
+    return "";
+  }
+
+  const absoluteUrl = normalizeUrl(raw);
+  if (absoluteUrl) {
+    return absoluteUrl;
+  }
+
+  try {
+    return normalizeUrl(new URL(raw, config.tracker.baseUrl).toString());
+  } catch (error) {
+    return "";
+  }
+}
+
+function resolvePopularSourceUrl() {
+  return resolveConfiguredTrackerUrl(config.tracker.popularUrl);
+}
+
 function buildTrackerSearchUrlFromText(rawQuery) {
   const queryText = normalizeQueryText(rawQuery);
   if (!queryText) {
@@ -468,6 +546,16 @@ function buildTrackerSearchUrlFromText(rawQuery) {
 }
 
 function resolveSourcePageUrl(body) {
+  if (String(body?.sourceMode || "").trim() === "popular") {
+    const popularUrl = resolvePopularSourceUrl();
+    if (popularUrl) {
+      return { pageUrl: popularUrl, mode: "popular" };
+    }
+    return {
+      error: "Configure tracker.popular_url in config.toml to use popular releases search."
+    };
+  }
+
   const pageUrl = normalizeUrl(body?.pageUrl);
   if (pageUrl) {
     return { pageUrl, mode: "url" };
@@ -480,7 +568,7 @@ function resolveSourcePageUrl(body) {
       return { pageUrl: searchUrl, mode: "text" };
     }
     return {
-      error: "Unable to build text search URL. Check TRACKER_BASE_URL and TRACKER_TEXT_SEARCH_PATH."
+      error: "Unable to build text search URL. Check tracker.base_url and tracker.text_search_path."
     };
   }
 
@@ -490,7 +578,7 @@ function resolveSourcePageUrl(body) {
   }
 
   return {
-    error: "Provide pageUrl or queryText, or configure TRACKER_BASE_URL / TRACKER_DEFAULT_SOURCE_URL."
+    error: "Provide pageUrl or queryText, or configure tracker.base_url / tracker.default_source_url."
   };
 }
 
@@ -521,11 +609,34 @@ function createJobSnapshot(job) {
     processed: job.processed,
     releases: job.releases.filter(Boolean),
     categories: categoryStore.list(),
+    tags: tagStore.list(),
     qualities: qualityFilterStore.list(),
     error: job.error || null,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt
   };
+}
+
+function extractTagsFromReleases(releases) {
+  const names = new Set();
+  for (const release of releases || []) {
+    const tags = Array.isArray(release?.tags) ? release.tags : [];
+    for (const rawTag of tags) {
+      const name = typeof rawTag === "string" ? rawTag : rawTag?.name;
+      const normalized = String(name || "").replace(/\s+/g, " ").trim();
+      if (normalized) {
+        names.add(normalized);
+      }
+    }
+  }
+  return Array.from(names).map((name) => ({ name }));
+}
+
+function ensureReleaseTags(tags) {
+  if (!Array.isArray(tags) || tags.length === 0) {
+    return;
+  }
+  tagStore.upsertMany(extractTagsFromReleases([{ tags }]), { defaultEnabled: true });
 }
 
 function extractCategoriesFromReleases(releases) {
@@ -558,24 +669,34 @@ function cleanupParseJobs() {
 
 app.use("/api", (request, response, next) => {
   cleanupAuthSessions();
-  const path = String(request.path || "");
-  if (
-    path === "/health" ||
-    path === "/version" ||
-    path === "/auth/login" ||
-    path === "/auth/status" ||
-    path === "/auth/logout"
-  ) {
-    return next();
+  const requestPath = String(request.path || "");
+  const isPublic =
+    requestPath === "/health" ||
+    requestPath === "/version" ||
+    requestPath === "/auth/login" ||
+    requestPath === "/auth/status";
+
+  let auth = null;
+  if (!isPublic || requestPath === "/auth/logout") {
+    auth = resolveAuthSession(request);
+    if (!auth && !isPublic) {
+      clearAuthCookie(response);
+      return response.status(401).json({ error: "Authentication required." });
+    }
+    if (auth) {
+      request.auth = auth.session;
+    }
   }
 
-  const auth = resolveAuthSession(request);
-  if (!auth) {
-    clearAuthCookie(response);
-    return response.status(401).json({ error: "Authentication required." });
+  const isMutating = !["GET", "HEAD", "OPTIONS"].includes(request.method);
+  const skipCsrf = requestPath === "/auth/login";
+  if (isMutating && !skipCsrf) {
+    const headerToken = String(request.headers["x-csrf-token"] || "").trim();
+    if (!auth || !headerToken || !safeEquals(headerToken, auth.session.csrfToken)) {
+      return response.status(403).json({ error: "Invalid CSRF token." });
+    }
   }
 
-  request.auth = auth.session;
   return next();
 });
 
@@ -596,14 +717,16 @@ app.get("/api/auth/status", (request, response) => {
     return response.json({
       authenticated: false,
       username: null,
-      expiresAt: null
+      expiresAt: null,
+      csrfToken: null
     });
   }
 
   return response.json({
     authenticated: true,
     username: auth.session.username,
-    expiresAt: auth.session.expiresAt
+    expiresAt: auth.session.expiresAt,
+    csrfToken: auth.session.csrfToken
   });
 });
 
@@ -611,6 +734,16 @@ app.post("/api/auth/login", (request, response) => {
   if (!trackerCredentialsConfigured()) {
     return response.status(500).json({
       error: "Tracker credentials are not configured on server."
+    });
+  }
+
+  const ip = getClientIp(request);
+  const rate = checkLoginRateLimit(ip);
+  if (!rate.ok) {
+    response.setHeader("Retry-After", String(rate.retryAfterSeconds));
+    return response.status(429).json({
+      error: "Too many login attempts. Try again later.",
+      retryAfterSeconds: rate.retryAfterSeconds
     });
   }
 
@@ -624,12 +757,14 @@ app.post("/api/auth/login", (request, response) => {
     return response.status(401).json({ error: "Invalid username or password." });
   }
 
+  resetLoginRateLimit(ip);
   const session = createAuthSession(username);
   setAuthCookie(response, session.token);
   return response.json({
     authenticated: true,
     username,
-    expiresAt: session.expiresAt
+    expiresAt: session.expiresAt,
+    csrfToken: session.csrfToken
   });
 });
 
@@ -649,7 +784,7 @@ app.get("/api/admin/update", (_, response) => {
 app.post("/api/admin/update", (request, response) => {
   if (!isUpdateScriptAvailable()) {
     return response.status(404).json({
-      error: "Update script not found. Set APP_UPDATE_SCRIPT_PATH or place update.sh in project root."
+      error: "Update script not found. Set app.update_script_path in config.toml or place update.sh in project root."
     });
   }
 
@@ -707,6 +842,12 @@ app.post("/api/admin/update", (request, response) => {
 app.get("/api/categories", (_, response) => {
   response.json({
     categories: categoryStore.list()
+  });
+});
+
+app.get("/api/tags", (_, response) => {
+  response.json({
+    tags: tagStore.list()
   });
 });
 
@@ -773,6 +914,19 @@ app.post("/api/categories", (request, response) => {
   });
 });
 
+app.post("/api/tags", (request, response) => {
+  const tags = Array.isArray(request.body?.tags) ? request.body.tags : null;
+  if (!tags) {
+    return response.status(400).json({ error: "tags must be an array." });
+  }
+
+  const result = tagStore.upsertMany(tags, { defaultEnabled: true });
+  return response.json({
+    changed: result.changed,
+    tags: result.categories
+  });
+});
+
 app.post("/api/quality-filters", (request, response) => {
   const qualities = Array.isArray(request.body?.qualities) ? request.body.qualities : null;
   if (!qualities) {
@@ -790,7 +944,7 @@ app.post("/api/releases/download-to-dir", async (request, response) => {
   const downloadDirectory = resolveDirectDownloadDir();
   if (!downloadDirectory) {
     return response.status(400).json({
-      error: "TRACKER_DIRECT_DOWNLOAD_DIR is not configured."
+      error: "tracker.direct_download_dir is not configured."
     });
   }
 
@@ -803,7 +957,7 @@ app.post("/api/releases/download-to-dir", async (request, response) => {
   const torrentUrl = resolveTrustedTrackerUrl(request.body?.torrentUrl);
   if (!torrentUrl) {
     return response.status(400).json({
-      error: "torrentUrl must be a valid tracker URL on TRACKER_BASE_URL host."
+      error: "torrentUrl must be a valid tracker URL on tracker.base_url host."
     });
   }
 
@@ -868,6 +1022,7 @@ app.post("/api/release", async (request, response) => {
     if (release.category) {
       categoryStore.ensureCategory(release.category);
     }
+    ensureReleaseTags(release.tags);
     return response.json({ release });
   } catch (error) {
     return response.status(500).json({ error: error.message || "Unexpected server error." });
@@ -887,9 +1042,14 @@ app.post("/api/releases", async (request, response) => {
     const client = await createLoggedClient();
     const result = await parseReleasesFromCollection(client, pageUrl, {
       maxReleases,
-      concurrency: config.tracker.concurrency
+      concurrency: config.tracker.concurrency,
+      releaseCache: releaseCacheStore,
+      sourceMode: source.mode
     });
     categoryStore.upsertMany(extractCategoriesFromReleases(result.releases), {
+      defaultEnabled: true
+    });
+    tagStore.upsertMany(extractTagsFromReleases(result.releases), {
       defaultEnabled: true
     });
 
@@ -920,11 +1080,20 @@ app.post("/api/releases/job", async (request, response) => {
     processed: 0,
     releases: [],
     error: null,
+    cancelled: false,
     createdAt: now,
     updatedAt: now
   };
 
   parseJobs.set(jobId, job);
+
+  function throwIfCancelled() {
+    if (job.cancelled) {
+      const error = new Error("Job cancelled.");
+      error.code = "JOB_CANCELLED";
+      throw error;
+    }
+  }
 
   (async () => {
     try {
@@ -932,29 +1101,47 @@ app.post("/api/releases/job", async (request, response) => {
       const result = await parseReleasesFromCollection(client, pageUrl, {
         maxReleases,
         concurrency: config.tracker.concurrency,
+        releaseCache: releaseCacheStore,
+        sourceMode: source.mode,
         onDiscovered: ({ totalFound }) => {
+          throwIfCancelled();
           job.totalFound = totalFound;
           job.updatedAt = Date.now();
         },
         onProgress: ({ processed, totalFound, index, release }) => {
+          throwIfCancelled();
           job.processed = processed;
           job.totalFound = totalFound;
           job.releases[index] = release;
           if (release?.category) {
             categoryStore.ensureCategory(release.category);
           }
+          ensureReleaseTags(release?.tags);
           job.updatedAt = Date.now();
         }
       });
+
+      if (job.cancelled) {
+        job.status = "cancelled";
+        job.updatedAt = Date.now();
+        return;
+      }
 
       job.status = "done";
       job.totalFound = result.totalFound;
       job.processed = result.releases.length;
       job.releases = result.releases;
+      tagStore.upsertMany(extractTagsFromReleases(result.releases), {
+        defaultEnabled: true
+      });
       job.updatedAt = Date.now();
     } catch (error) {
-      job.status = "error";
-      job.error = error.message || "Unexpected server error.";
+      if (error?.code === "JOB_CANCELLED" || job.cancelled) {
+        job.status = "cancelled";
+      } else {
+        job.status = "error";
+        job.error = error.message || "Unexpected server error.";
+      }
       job.updatedAt = Date.now();
     }
   })();
@@ -975,6 +1162,29 @@ app.get("/api/releases/job/:jobId", (request, response) => {
   }
 
   return response.json(createJobSnapshot(job));
+});
+
+app.delete("/api/releases/job/:jobId", (request, response) => {
+  const jobId = String(request.params.jobId || "").trim();
+  const job = parseJobs.get(jobId);
+  if (!job) {
+    return response.status(404).json({ error: "Job not found." });
+  }
+
+  if (job.status === "running") {
+    job.cancelled = true;
+    job.status = "cancelled";
+    job.updatedAt = Date.now();
+  }
+
+  return response.status(202).json({
+    jobId,
+    status: job.status
+  });
+});
+
+app.use("/api", (_, response) => {
+  response.status(404).json({ error: "Not found." });
 });
 
 app.get("/icons8-download-cute-color-16.png", (_, response) => {
@@ -1000,6 +1210,26 @@ app.get("/favicon.ico", (_, response) => {
 app.get("*", (_, response) => {
   response.sendFile(path.join(__dirname, "..", "public", "index.html"));
 });
+
+function flushAllStoresOnExit() {
+  for (const store of [categoryStore, qualityFilterStore, tagStore, savedSearchStore, releaseCacheStore]) {
+    if (store && typeof store.flushSave === "function") {
+      try {
+        store.flushSave();
+      } catch (error) {
+        console.warn(`Store flush failed: ${error.message}`);
+      }
+    }
+  }
+}
+
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.once(signal, () => {
+    flushAllStoresOnExit();
+    process.exit(0);
+  });
+}
+process.on("beforeExit", flushAllStoresOnExit);
 
 app.listen(config.app.port, () => {
   // Keep startup logs short and deterministic for container logs.

@@ -1,0 +1,15 @@
+[app]
+port = 3000
+update_script_path = "/volume1/docker/trackerview/update.sh"
+
+[tracker]
+base_url = "https://tracker.example/forum"
+default_source_url = ""
+popular_url = ""
+text_search_path = "tracker.php"
+direct_download_dir = "/volume1/Downloads/data"
+max_releases = 80
+hard_max_releases = 700
+concurrency = 4
+request_timeout_ms = 25000
+user_agent = "TrackerViewBot/0.1 (+https://localhost)"

@@ -6,8 +6,12 @@ function normalizeCategoryName(value) {
   return normalized || "Без категории";
 }
 
+const SAVE_DEBOUNCE_MS = 500;
+
 function createCategoryStore(filePath) {
   const categories = new Map();
+  let saveTimer = null;
+  let savePending = false;
 
   function ensureDirectory() {
     const directoryPath = path.dirname(filePath);
@@ -49,7 +53,7 @@ function createCategoryStore(filePath) {
     }
   }
 
-  function saveToDisk() {
+  function saveToDiskNow() {
     ensureDirectory();
 
     const payload = {
@@ -59,6 +63,39 @@ function createCategoryStore(filePath) {
     const tempPath = `${filePath}.tmp`;
     fs.writeFileSync(tempPath, JSON.stringify(payload, null, 2), "utf8");
     fs.renameSync(tempPath, filePath);
+    savePending = false;
+  }
+
+  function flushSave() {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    if (savePending) {
+      try {
+        saveToDiskNow();
+      } catch (error) {
+        console.warn(`Failed to flush store ${filePath}: ${error.message}`);
+      }
+    }
+  }
+
+  function saveToDisk() {
+    savePending = true;
+    if (saveTimer) {
+      return;
+    }
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      try {
+        saveToDiskNow();
+      } catch (error) {
+        console.warn(`Failed to save store ${filePath}: ${error.message}`);
+      }
+    }, SAVE_DEBOUNCE_MS);
+    if (typeof saveTimer.unref === "function") {
+      saveTimer.unref();
+    }
   }
 
   function list() {
@@ -123,7 +160,8 @@ function createCategoryStore(filePath) {
   return {
     list,
     upsertMany,
-    ensureCategory
+    ensureCategory,
+    flushSave
   };
 }
 

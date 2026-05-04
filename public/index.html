@@ -10,145 +10,155 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <div class="aurora" aria-hidden="true"></div>
-    <main class="app-shell">
-      <header class="app-header">
-        <p id="app-eyebrow" class="eyebrow">Tracker Dashboard</p>
+    <header class="topbar">
+      <div class="topbar-brand">
         <h1 id="app-title">TrackerView</h1>
-        <p id="app-subtitle" class="subtitle">
-          Paste a tracker page URL or type search text to build a clean release table with poster,
-          description, publication date and release size.
-        </p>
-        <p id="app-version" class="app-version">Version 1.1.0000000000</p>
-        <div class="auth-actions">
-          <p id="auth-user" class="auth-user hidden"></p>
-          <button id="update-btn" type="button" class="secondary-btn hidden">Update app</button>
-          <button id="logout-btn" type="button" class="secondary-btn hidden">Log out</button>
+        <span id="app-version" class="version-tag">0.0.0</span>
+      </div>
+      <div class="topbar-actions">
+        <span id="auth-user" class="auth-user hidden"></span>
+        <button id="update-btn" type="button" class="ghost-btn hidden">Update app</button>
+        <button id="logout-btn" type="button" class="ghost-btn hidden">Log out</button>
+      </div>
+    </header>
+
+    <p id="update-status" class="banner banner-update hidden"></p>
+
+    <section id="auth-panel" class="auth-panel">
+      <form id="auth-form" autocomplete="off">
+        <h2 id="auth-title">Sign in</h2>
+        <p id="auth-subtitle" class="muted">Use tracker username and password.</p>
+        <div class="auth-fields">
+          <input
+            id="auth-username"
+            name="auth-username"
+            type="text"
+            placeholder="Username"
+            autocomplete="username"
+            required
+          />
+          <input
+            id="auth-password"
+            name="auth-password"
+            type="password"
+            placeholder="Password"
+            autocomplete="current-password"
+            required
+          />
+          <button id="auth-submit" type="submit" class="primary-btn">Sign in</button>
         </div>
-        <p id="update-status" class="update-status hidden"></p>
-      </header>
+        <p id="auth-status" class="status-line"></p>
+      </form>
+    </section>
 
-      <section id="auth-panel" class="panel auth-panel">
-        <form id="auth-form" autocomplete="off">
-          <p id="auth-title" class="auth-title">Sign in</p>
-          <p id="auth-subtitle" class="auth-subtitle">Use tracker username and password.</p>
-          <div class="auth-row">
+    <main id="app-content" class="app-content hidden">
+      <div class="toolbar">
+        <form id="load-form" class="toolbar-form" autocomplete="off">
+          <div class="source-group">
             <input
-              id="auth-username"
-              name="auth-username"
+              id="source-url"
+              name="source-url"
               type="text"
-              placeholder="Username"
-              autocomplete="username"
-              required
+              placeholder="URL or text for search"
+              autocomplete="off"
             />
-            <input
-              id="auth-password"
-              name="auth-password"
-              type="password"
-              placeholder="Password"
-              autocomplete="current-password"
-              required
-            />
-            <button id="auth-submit" type="submit">Sign in</button>
+            <select
+              id="saved-searches-select"
+              name="saved-searches-select"
+              title="Saved searches"
+              aria-label="Saved searches"
+            >
+              <option id="saved-searches-placeholder-option" value="">Saved searches</option>
+            </select>
           </div>
-          <p id="auth-status" class="auth-status"></p>
+          <input
+            id="max-releases"
+            name="max-releases"
+            type="number"
+            min="1"
+            value="80"
+            title="Max releases"
+            aria-label="Max releases"
+          />
+          <button id="load-btn" type="submit" class="primary-btn">Load</button>
+          <button
+            id="save-search-btn"
+            type="button"
+            title="Save search"
+            aria-label="Save search"
+            class="icon-btn hidden"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M4 3h13l3 3v15H4V3zm2 2v14h12V7.2L16.2 5H6zm2 0h7v4H8V5zm0 8h8v6H8v-6z"></path>
+            </svg>
+          </button>
         </form>
-      </section>
-
-      <div id="app-content" class="app-content hidden">
-        <section class="panel controls">
-          <form id="load-form" autocomplete="off">
-            <label id="source-label" for="source-url">Source URL or text query</label>
-            <div class="control-row">
-              <div class="source-input-wrap">
-                <input
-                  id="source-url"
-                  name="source-url"
-                  type="text"
-                  placeholder="URL or text for search"
-                />
-                <select
-                  id="saved-searches-select"
-                  name="saved-searches-select"
-                  title="Saved searches"
-                  aria-label="Saved searches"
-                >
-                  <option id="saved-searches-placeholder-option" value="">Saved searches</option>
-                </select>
-              </div>
-              <input
-                id="max-releases"
-                name="max-releases"
-                type="number"
-                min="1"
-                value="80"
-                title="Maximum number of releases to parse"
-              />
-              <button id="load-btn" type="submit">Load releases</button>
-              <button
-                id="save-search-btn"
-                type="button"
-                title="Save search"
-                aria-label="Save search"
-                class="save-search-btn hidden"
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <path
-                    d="M4 3h13l3 3v15H4V3zm2 2v14h12V7.2L16.2 5H6zm2 0h7v4H8V5zm0 8h8v6H8v-6z"
-                  ></path>
-                </svg>
-              </button>
-            </div>
-          </form>
-
-          <button id="filters-toggle" type="button" class="filters-toggle" aria-expanded="false">
+        <div class="toolbar-extra">
+          <button id="sort-date-btn" type="button" class="ghost-btn" aria-label="Toggle date sort order">
+            <span class="sort-label">Date</span>
+            <span id="sort-arrow" class="sort-arrow">↓</span>
+          </button>
+          <button
+            id="filters-toggle"
+            type="button"
+            class="ghost-btn"
+            aria-expanded="false"
+            aria-controls="filters-drawer"
+          >
             Filters
           </button>
+        </div>
+      </div>
 
-          <div class="status-row">
-            <p id="status">Idle</p>
-            <p id="progress-counter">Processed: 0/0</p>
-            <p id="summary"></p>
-          </div>
-
-          <div class="quality-filter-block">
-            <p id="quality-filters-title" class="category-filter-title">Quality filters</p>
-            <div id="quality-filters" class="category-filters">
-              <p class="category-empty">Quality filters will appear after loading releases.</p>
+      <div id="filters-drawer" class="filters-drawer" hidden>
+        <div class="filters-column">
+          <section class="filters-section">
+            <p id="tag-filters-title" class="filters-section-title">Tags</p>
+            <div id="tag-filters" class="chip-group">
+              <p class="chip-empty">Tags will appear after loading releases.</p>
             </div>
-          </div>
-
-          <div class="category-filter-block" id="filters-panel" hidden>
-            <p class="category-filter-title">Category filters</p>
-            <div id="category-filters" class="category-filters">
-              <p class="category-empty">Categories will appear after loading releases.</p>
+          </section>
+          <section class="filters-section">
+            <p id="quality-filters-title" class="filters-section-title">Quality</p>
+            <div id="quality-filters" class="chip-group">
+              <p class="chip-empty">Quality filters will appear after loading releases.</p>
             </div>
-          </div>
-        </section>
-
-        <section class="panel table-panel">
-          <div class="table-wrap">
-            <table id="releases-table">
-              <thead>
-                <tr>
-                  <th id="table-header-poster">Poster</th>
-                  <th id="table-header-description">Description</th>
-                  <th id="table-header-published">Published</th>
-                  <th id="table-header-size">Size</th>
-                </tr>
-              </thead>
-              <tbody id="releases-body">
-                <tr>
-                  <td id="table-placeholder-cell" colspan="4" class="placeholder">
-                    No data loaded. Submit a URL or text query to build the release table.
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+          </section>
+        </div>
+        <section class="filters-section">
+          <p class="filters-section-title">Category</p>
+          <div id="category-filters" class="chip-group">
+            <p class="chip-empty">Categories will appear after loading releases.</p>
           </div>
         </section>
       </div>
+
+      <div class="status-bar">
+        <p id="status" class="status-text">Idle</p>
+        <p id="progress-counter" class="progress-text">0 / 0</p>
+        <p id="summary" class="summary-text"></p>
+      </div>
+
+      <div id="release-feed" class="release-feed" role="feed">
+        <p id="feed-placeholder" class="feed-placeholder">
+          No data loaded. Submit a URL or text query to build the release feed.
+        </p>
+      </div>
     </main>
+
+    <aside id="release-drawer" class="release-drawer" hidden aria-hidden="true">
+      <div class="drawer-backdrop" id="drawer-backdrop"></div>
+      <div
+        class="drawer-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="drawer-title"
+        tabindex="-1"
+      >
+        <button type="button" id="drawer-close" class="drawer-close" aria-label="Close">×</button>
+        <div id="drawer-content" class="drawer-content"></div>
+      </div>
+    </aside>
 
     <dialog id="save-search-dialog" class="save-search-dialog">
       <form id="save-search-form" method="dialog" novalidate>
@@ -164,12 +174,13 @@
           required
         />
         <div class="dialog-actions">
-          <button type="button" id="save-search-cancel" class="secondary-btn">Cancel</button>
-          <button type="submit" id="save-search-submit">Save</button>
+          <button type="button" id="save-search-cancel" class="ghost-btn">Cancel</button>
+          <button type="submit" id="save-search-submit" class="primary-btn">Save</button>
         </div>
       </form>
     </dialog>
 
+    <script src="/releaseGrouping.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>

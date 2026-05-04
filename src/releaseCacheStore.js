@@ -40,8 +40,12 @@ function cloneRelease(release) {
   return JSON.parse(JSON.stringify(release || {}));
 }
 
+const SAVE_DEBOUNCE_MS = 500;
+
 function createReleaseCacheStore(filePath) {
   const records = new Map();
+  let saveTimer = null;
+  let savePending = false;
 
   function ensureDirectory() {
     const directoryPath = path.dirname(filePath);
@@ -69,7 +73,7 @@ function createReleaseCacheStore(filePath) {
       .sort((left, right) => Number(right.cachedAt || 0) - Number(left.cachedAt || 0));
   }
 
-  function saveToDisk() {
+  function saveToDiskNow() {
     ensureDirectory();
 
     const payload = {
@@ -79,6 +83,39 @@ function createReleaseCacheStore(filePath) {
     const tempPath = `${filePath}.tmp`;
     fs.writeFileSync(tempPath, JSON.stringify(payload, null, 2), "utf8");
     fs.renameSync(tempPath, filePath);
+    savePending = false;
+  }
+
+  function flushSave() {
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    if (savePending) {
+      try {
+        saveToDiskNow();
+      } catch (error) {
+        console.warn(`Failed to flush release cache ${filePath}: ${error.message}`);
+      }
+    }
+  }
+
+  function saveToDisk() {
+    savePending = true;
+    if (saveTimer) {
+      return;
+    }
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      try {
+        saveToDiskNow();
+      } catch (error) {
+        console.warn(`Failed to save release cache ${filePath}: ${error.message}`);
+      }
+    }, SAVE_DEBOUNCE_MS);
+    if (typeof saveTimer.unref === "function") {
+      saveTimer.unref();
+    }
   }
 
   function loadFromDisk() {
@@ -201,7 +238,8 @@ function createReleaseCacheStore(filePath) {
   return {
     getByTopicUrl,
     upsert,
-    normalizeTopicUrl
+    normalizeTopicUrl,
+    flushSave
   };
 }
 

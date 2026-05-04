@@ -41,7 +41,7 @@ class SimpleCookieJar {
 
     const singleLine = response.headers.get("set-cookie");
     if (singleLine) {
-      const parts = singleLine.split(/,(?=[^;,\\s]+=[^;,]+)/g);
+      const parts = singleLine.split(/,(?=[^;,\s]+=[^;,]+)/g);
       for (const part of parts) {
         this.setFromSetCookieLine(part);
       }
@@ -187,7 +187,7 @@ class TrackerClient {
     const looksLoggedIn =
       response.text.includes("LOGGED_IN     = 1") ||
       response.text.includes("Вы зашли как") ||
-      response.text.includes(this.username);
+      /logged-in-username[^>]*>[^<]*<\/a>/i.test(response.text);
 
     if (!looksLoggedIn) {
       throw new Error("Tracker login failed. Check TRACKER_USERNAME/TRACKER_PASSWORD.");

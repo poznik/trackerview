@@ -7,6 +7,7 @@ TrackerView — веб-приложение для парсинга страни
 ## Возможности
 
 - Парсинг по URL страницы или по текстовому запросу.
+- Встроенный поиск `Популярные релизы` по URL чартов из `tracker.popular_url`.
 - Асинхронный парсинг через job API с прогрессом (`totalFound` / `processed`).
 - Парсинг одиночной темы и страниц-коллекций с переходом по пагинации.
 - Отображение постера, описания, даты публикации, размера, сидов и ссылок на `.torrent`.
@@ -25,11 +26,9 @@ TrackerView — веб-приложение для парсинга страни
 
 ## Версионирование
 
-- Формат версии: `1.1.YYMMDDHHMM`.
-- Часовой пояс для штампа времени: `UTC+4`.
-- Значение `1.1` фиксированное.
-- Третья часть версии вычисляется из времени последнего git-коммита (head) при запуске приложения.
-- Можно задать явную версию через `APP_VERSION` (например `1.1.2603111805`).
+- Формат версии: `MAJOR.MINOR.PATCH`, например `0.2.1`.
+- Версия задается вручную в `package.json` или параметром `-Version` для `scripts/build-release.ps1`.
+- На NAS версия берется из `package.json`; при обновлении через кнопку код подтягивается из GitHub.
 
 ## Требования
 
@@ -40,14 +39,14 @@ TrackerView — веб-приложение для парсинга страни
 
 ## Быстрый старт (локально)
 
-1. Создайте конфиг:
+1. Создайте конфиги:
 
 ```bash
+cp config.toml.example config.toml
 cp .env.example .env
 ```
 
-2. Заполните в `.env` минимум:
-- `TRACKER_BASE_URL`
+2. Заполните `tracker.base_url` и другие не-секретные настройки в `config.toml`, а в `.env` минимум:
 - `TRACKER_USERNAME`
 - `TRACKER_PASSWORD`
 
@@ -69,180 +68,109 @@ npm run start:local
 http://127.0.0.1:3000
 ```
 
-## Запуск в Docker
+## Release для Synology NAS
 
-```bash
-docker compose up -d --build
+Основная схема NAS-развертывания: сервис запускается напрямую на железе NAS как Node.js-процесс, без Docker. Код обновляется из GitHub, кнопка `Обновить` запускает `/volume1/docker/trackerview/update.sh`.
+
+1. Подготовьте локальный `config.toml`:
+
+```powershell
+Copy-Item config.toml.example config.toml
 ```
 
-Приложение будет доступно на `http://<host>:3000`.
+2. Соберите release-пакет:
 
-## Пошаговый запуск на Synology NAS (DSM 7.2.2, Node.js v22)
-
-Ниже сценарий запуска без Docker, напрямую через установленный пакет Node.js v22.
-
-1. Включите SSH на NAS.
-В DSM: `Панель управления -> Терминал и SNMP -> Включить службу SSH`.
-
-2. Подключитесь к NAS по SSH:
-
-```bash
-ssh <ваш_пользователь>@<ip_nas>
+```powershell
+npm run release
 ```
 
-3. Проверьте, что Node.js и npm доступны:
+Скрипт создаст `release/<version>` и положит туда только файлы, которые нужно передать на NAS:
+- исходники `src/`, `public/`
+- `package.json`, `package-lock.json`
+- `config.toml`
+- `.env.example`
+- `update.sh`
+- `scripts/nas-start.sh`
+- `scripts/nas-stop.sh`
+- `scripts/wait-for-health.sh`
+- `INSTALL_NAS.md`
+- `manifest.json`
+
+3. Первый запуск на NAS из GitHub:
 
 ```bash
-node -v
-npm -v
-which node
-which npm
-```
-
-4. Подготовьте директорию приложения (пример):
-
-```bash
-sudo -i
-mkdir -p /volume1/docker/trackerview
+mkdir -p /volume1/docker
+cd /volume1/docker
+git clone -b main https://github.com/poznik/trackerview.git trackerview
 cd /volume1/docker/trackerview
 ```
 
-5. Получите код приложения:
-
-```bash
-git clone https://github.com/poznik/trackerview.git .
-```
-
-Если проект уже загружен, используйте:
-
-```bash
-git pull
-```
-
-6. Создайте и заполните `.env`:
-
-```bash
-cp .env.example .env
-```
-
-Минимально заполните:
-- `TRACKER_BASE_URL`
-- `TRACKER_USERNAME`
-- `TRACKER_PASSWORD`
-
-7. Установите зависимости:
-
-```bash
-npm ci --omit=dev
-```
-
-Если `npm ci` не подходит (например, меняли `package-lock.json`), используйте:
-
-```bash
-npm install --omit=dev
-```
-
-8. Запустите приложение вручную для проверки:
-
-```bash
-npm run start:local
-```
-
-Откройте в браузере:
-
-```text
-http://<ip_nas>:3000
-```
-
-9. Настройте автозапуск через Планировщик задач DSM.
-В DSM: `Панель управления -> Планировщик задач -> Создать -> Запускаемая по событию -> Пользовательский сценарий`.
-
-- Пользователь: `root`
-- Событие: `При запуске`
-- Сценарий:
-
-```bash
-APP_DIR="/volume1/docker/trackerview"
-NODE_BIN="/var/packages/Node.js_v22/target/usr/local/bin/node"
-LOG_DIR="$APP_DIR/logs"
-LOG_FILE="$LOG_DIR/server.log"
-
-mkdir -p "$LOG_DIR"
-if pgrep -f "$APP_DIR/src/server.js" >/dev/null 2>&1; then
-  exit 0
-fi
-
-cd "$APP_DIR"
-nohup "$NODE_BIN" src/server.js >> "$LOG_FILE" 2>&1 &
-```
-
-10. Проверка после перезагрузки NAS:
-
-```bash
-curl -fsS http://127.0.0.1:3000/api/health
-```
-
-Ожидаемый ответ:
-
-```json
-{"status":"ok"}
-```
-
-### Обновление приложения на NAS
+4. Перенесите из `release/<version>` на NAS:
+- `config.toml` -> `/volume1/docker/trackerview/config.toml`
+- `.env.example` -> `/volume1/docker/trackerview/.env`, затем заполните секреты
 
 ```bash
 cd /volume1/docker/trackerview
-git pull
-npm ci --omit=dev
-pkill -f "/volume1/docker/trackerview/src/server.js" || true
-nohup /var/packages/Node.js_v22/target/usr/local/bin/node src/server.js >> /volume1/docker/trackerview/logs/server.log 2>&1 &
+vi .env
 ```
 
-### Типовые проблемы на DSM
+5. Установите production-зависимости и запустите сервис:
 
-- `node: command not found` в Планировщике задач:
-используйте абсолютный путь к Node (`/var/packages/Node.js_v22/target/usr/local/bin/node`).
-- Приложение не открывается извне:
-проверьте правила DSM Firewall и проброс порта `3000`.
-- Ошибка логина трекера:
-проверьте `TRACKER_USERNAME`, `TRACKER_PASSWORD`, `TRACKER_BASE_URL` в `.env`.
+```bash
+cd /volume1/docker/trackerview
+npm ci --omit=dev
+sh scripts/nas-start.sh
+sh scripts/wait-for-health.sh http://127.0.0.1:3000 90
+```
 
-## Конфигурация (`.env`)
+Update-скрипт останавливает локальный Node.js-процесс, делает `git fetch/reset` до `origin/main`, выполняет `npm ci --omit=dev`, запускает сервис и ждет `/api/health`.
 
-| Переменная | По умолчанию | Обязательно | Назначение |
+Папка прямого скачивания используется напрямую: `/volume1/Downloads/data`.
+
+## Конфигурация
+
+Не-секретные настройки хранятся в `config.toml`, секреты в `.env`.
+
+### `config.toml`
+
+| Ключ | По умолчанию | Обязательно | Назначение |
 |---|---|---|---|
-| `PORT` | `3000` | нет | Порт Express-сервера |
-| `TRACKER_BASE_URL` | `https://tracker.example/forum` | да | Базовый URL трекера |
-| `TRACKER_DEFAULT_SOURCE_URL` | `` | нет | URL источника при пустом вводе (если пусто, используется `TRACKER_BASE_URL`) |
-| `TRACKER_TEXT_SEARCH_PATH` | `tracker.php` | нет | Путь/URL для текстового поиска (резолвится от `TRACKER_BASE_URL`) |
-| `TRACKER_USERNAME` | `` | да | Логин трекера |
-| `TRACKER_PASSWORD` | `` | да | Пароль трекера |
-| `TRACKER_DIRECT_DOWNLOAD_DIR` | `` | no | Absolute path for server-side torrent download button (for example `/volume1/Downloads`) |
-| `APP_UPDATE_SCRIPT_PATH` | `./update.sh` | нет | Путь до скрипта обновления, вызываемого кнопкой `Update app` |
-| `APP_VERSION` | `` | нет | Явная версия приложения в формате `1.1.YYMMDDHHMM` (если пусто, вычисляется автоматически из git head) |
-| `TRACKER_MAX_RELEASES` | `80` | нет | Значение `maxReleases` по умолчанию |
-| `TRACKER_HARD_MAX_RELEASES` | `700` | нет | Верхний предел `maxReleases` для запросов |
-| `TRACKER_CONCURRENCY` | `4` | нет | Параллелизм парсинга страниц релизов |
-| `TRACKER_REQUEST_TIMEOUT_MS` | `25000` | нет | HTTP timeout для запросов к трекеру |
-| `TRACKER_USER_AGENT` | `TrackerViewBot/0.1 (+https://localhost)` | нет | User-Agent запросов к трекеру |
-| `TRACKER_CHECK_RELEASE_URL` | `` | нет | URL релиза для live-check |
-| `TRACKER_CHECK_COLLECTION_URL` | `` | нет | URL коллекции для live-check |
-| `TRACKER_CHECK_MAX_RELEASES` | `5` | нет | Лимит релизов в live-check коллекции |
+| `app.port` | `3000` | нет | Порт Express-сервера |
+| `app.update_script_path` | `/volume1/docker/trackerview/update.sh` | нет | Путь до update-скрипта, если кнопка обновления запускается из приложения |
+| `tracker.base_url` | `https://tracker.example/forum` | да | Базовый URL трекера |
+| `tracker.default_source_url` | `` | нет | URL источника при пустом вводе |
+| `tracker.popular_url` | `` | нет | URL раздела чартов для встроенного поиска `Популярные релизы` |
+| `tracker.text_search_path` | `tracker.php` | нет | Путь/URL для текстового поиска |
+| `tracker.direct_download_dir` | `/volume1/Downloads/data` | нет | Папка серверного сохранения `.torrent` |
+| `tracker.max_releases` | `80` | нет | Значение `maxReleases` по умолчанию |
+| `tracker.hard_max_releases` | `700` | нет | Верхний предел `maxReleases` |
+| `tracker.concurrency` | `4` | нет | Параллелизм парсинга страниц релизов |
+| `tracker.request_timeout_ms` | `25000` | нет | HTTP timeout для запросов к трекеру |
+| `tracker.user_agent` | `TrackerViewBot/0.1 (+https://localhost)` | нет | User-Agent запросов к трекеру |
+
+### `.env`
+
+| Переменная | Обязательно | Назначение |
+|---|---|---|
+| `TRACKER_USERNAME` | да | Логин трекера |
+| `TRACKER_PASSWORD` | да | Пароль трекера |
 
 ### Как выбирается источник парсинга
 
 Для `POST /api/releases` и `POST /api/releases/job` источник определяется в таком порядке:
 
-1. `pageUrl` из запроса (если валидный URL).
-2. `queryText` из запроса (сервер сам строит URL поиска через `TRACKER_BASE_URL + TRACKER_TEXT_SEARCH_PATH`).
-3. `TRACKER_DEFAULT_SOURCE_URL`.
-4. `TRACKER_BASE_URL`.
+1. `sourceMode=popular` из запроса (использует `tracker.popular_url`).
+2. `pageUrl` из запроса (если валидный URL).
+3. `queryText` из запроса (сервер сам строит URL поиска через `tracker.base_url + tracker.text_search_path`).
+4. `tracker.default_source_url`.
+5. `tracker.base_url`.
 
 ## Скрипты npm
 
 - `npm start` — запуск production-сервера.
 - `npm run start:local` — локальный запуск сервера.
 - `npm run dev` — запуск с `nodemon`.
+- `npm run release` — сборка NAS-local release-пакета в `release/<version>`.
 - `npm run check:live` — health-check + опциональные проверки релиза/коллекции.
 - `npm run dev:battle` — поднимает сервер, ждет health, запускает live-check.
 
@@ -284,7 +212,7 @@ nohup /var/packages/Node.js_v22/target/usr/local/bin/node src/server.js >> /volu
 
 ### `POST /api/admin/update`
 
-Запускает скрипт обновления (`APP_UPDATE_SCRIPT_PATH`) в фоне.
+Запускает скрипт обновления (`app.update_script_path`) в фоне.
 Маршрут защищен авторизацией приложения.
 
 ### `GET /api/client-config`

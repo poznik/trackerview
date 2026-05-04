@@ -3,3 +3,16 @@ npm-debug.log*
 .git
 .gitignore
 README.md
+.env
+.env.*
+config.toml
+release
+release/
+data
+data/
+logs
+logs/
+*.log
+update.sh
+.vscode
+.idea
