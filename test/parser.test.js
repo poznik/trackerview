@@ -3,6 +3,8 @@ const assert = require("node:assert/strict");
 
 const {
   parseReleasePage,
+  parseReleasesFromCollection,
+  enrichReleaseScreenshots,
   isCachedReleaseUsable,
   resolveReleaseQualityInfo,
   extractPopularChartTopicLinks,
@@ -21,7 +23,8 @@ function buildReleaseHtml(overrides = {}) {
     seeds = "42",
     torrentHref = "/forum/dl.php?t=12345",
     posterImg =
-      '<var class="postImg postImgAligned" title="https://example.com/poster_o.jpg"></var>'
+      '<var class="postImg postImgAligned" title="https://example.com/poster_o.jpg"></var>',
+    bodyExtra = ""
   } = overrides;
 
   return `<!doctype html>
@@ -41,6 +44,7 @@ function buildReleaseHtml(overrides = {}) {
   </table>
   <div class="post_body">
     ${posterImg}
+    ${bodyExtra}
     <span class="post-b">Описание</span>: ${description.replace(/^Описание:\s*/i, "")}
     <span class="post-br"><br/></span>
   </div>
@@ -191,6 +195,85 @@ test("parseReleasePage attaches quality field to release", () => {
   assert.ok(release.quality);
   assert.equal(release.quality.label, "720p");
   assert.equal(release.quality.tone, "yellow");
+});
+
+test("enrichReleaseScreenshots derives Fastpic big image URL without fetching view page", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => {
+    throw new Error("Unexpected Fastpic view page fetch.");
+  };
+
+  try {
+    const release = await enrichReleaseScreenshots({
+      topicUrl: TOPIC_URL,
+      screenshots: [
+        {
+          thumbUrl: "https://i123.fastpic.org/thumb/2026/0504/xy/abcdxy.jpg",
+          fullUrl: "https://fastpic.org/view/123/2026/0504/abcdxy.jpg.html",
+          previewUrl: "https://i123.fastpic.org/thumb/2026/0504/xy/abcdxy.jpg"
+        }
+      ]
+    });
+
+    assert.equal(
+      release.screenshots[0].previewUrl,
+      "https://i123.fastpic.org/big/2026/0504/xy/abcdxy.jpg"
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("parseReleasesFromCollection publishes parsed release before screenshot enrichment progress", async () => {
+  const listUrl = "https://tracker.example/forum/viewforum.php?f=10";
+  const topicUrl = "https://tracker.example/forum/viewtopic.php?t=12345";
+  const topicHtml = buildReleaseHtml({
+    bodyExtra:
+      '<a href="https://fastpic.org/view/123/2026/0504/abcdxy.jpg.html">' +
+      '<var class="postImg" title="https://i123.fastpic.org/thumb/2026/0504/xy/abcdxy.jpg"></var>' +
+      "</a>"
+  });
+  const events = [];
+  const client = {
+    async request(url) {
+      if (url === listUrl) {
+        return {
+          ok: true,
+          status: 200,
+          url,
+          text: '<a class="topictitle" href="/forum/viewtopic.php?t=12345">Topic</a>'
+        };
+      }
+      if (url === topicUrl) {
+        return {
+          ok: true,
+          status: 200,
+          url,
+          text: topicHtml
+        };
+      }
+      throw new Error(`Unexpected URL: ${url}`);
+    }
+  };
+
+  const result = await parseReleasesFromCollection(client, listUrl, {
+    maxReleases: 1,
+    concurrency: 1,
+    onReleaseUpdate: ({ phase, release }) => {
+      events.push({ type: "release_update", phase, previewUrl: release.screenshots[0]?.previewUrl });
+    },
+    onProgress: ({ release }) => {
+      events.push({ type: "progress", previewUrl: release.screenshots[0]?.previewUrl });
+    }
+  });
+
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["release_update", "progress"]
+  );
+  assert.equal(events[0].phase, "parsed");
+  assert.equal(events[0].previewUrl, "https://i123.fastpic.org/big/2026/0504/xy/abcdxy.jpg");
+  assert.equal(result.releases[0].screenshots[0].previewUrl, events[1].previewUrl);
 });
 
 test("isCachedReleaseUsable accepts well-formed entries", () => {

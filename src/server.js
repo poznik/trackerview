@@ -10,6 +10,7 @@ const { parseReleasePage, parseReleasesFromCollection, enrichReleaseScreenshots 
 const { createCategoryStore } = require("./categoryStore");
 const { createSavedSearchStore, normalizeSearchName, normalizeSearchUrl } = require("./savedSearchStore");
 const { createReleaseCacheStore } = require("./releaseCacheStore");
+const { createImageCache } = require("./imageCache");
 const diagnostics = require("./diagnostics");
 
 diagnostics.configure(config.diagnostics);
@@ -39,6 +40,11 @@ const qualityFilterStore = createCategoryStore(path.join(__dirname, "..", "data"
 const tagStore = createCategoryStore(path.join(__dirname, "..", "data", "tags.json"));
 const savedSearchStore = createSavedSearchStore(path.join(__dirname, "..", "data", "saved-searches.json"));
 const releaseCacheStore = createReleaseCacheStore(path.join(__dirname, "..", "data", "releases-cache.json"));
+const imageCache = createImageCache({
+  cacheDir: config.cache.picsDir,
+  timeoutMs: config.tracker.requestTimeoutMs,
+  userAgent: config.tracker.userAgent
+});
 const MAX_DOWNLOAD_FILE_NAME_LENGTH = 180;
 
 app.set("trust proxy", true);
@@ -616,13 +622,20 @@ function createJobSnapshot(job) {
     sourceUrl: job.sourceUrl,
     totalFound: job.totalFound,
     processed: job.processed,
-    releases: job.releases.filter(Boolean),
+    releases: imageCache.rewriteReleases(job.releases.filter(Boolean)),
     categories: categoryStore.list(),
     tags: tagStore.list(),
     qualities: qualityFilterStore.list(),
     error: job.error || null,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt
+  };
+}
+
+function createReleaseResultPayload(result) {
+  return {
+    ...result,
+    releases: imageCache.rewriteReleases(result?.releases)
   };
 }
 
@@ -707,6 +720,17 @@ app.use("/api", (request, response, next) => {
   }
 
   return next();
+});
+
+app.get(`${imageCache.routePrefix}/:fileName`, async (request, response) => {
+  cleanupAuthSessions();
+  const auth = resolveAuthSession(request);
+  if (!auth) {
+    clearAuthCookie(response);
+    return response.sendStatus(401);
+  }
+
+  return imageCache.handleRequest(request, response);
 });
 
 app.get("/api/health", (_, response) => {
@@ -1052,7 +1076,7 @@ app.post("/api/release", async (request, response) => {
       cpu: diagnostics.cpuDeltaMs(cpuStart),
       memory: diagnostics.processSnapshot()
     });
-    return response.json({ release });
+    return response.json({ release: imageCache.rewriteRelease(release) });
   } catch (error) {
     diagnostics.log("single_release.error", {
       releaseUrl,
@@ -1103,7 +1127,7 @@ app.post("/api/releases", async (request, response) => {
       cpu: diagnostics.cpuDeltaMs(cpuStart),
       memory: diagnostics.processSnapshot()
     });
-    return response.json(result);
+    return response.json(createReleaseResultPayload(result));
   } catch (error) {
     diagnostics.log("releases.sync.error", {
       sourceMode: source.mode,
@@ -1179,6 +1203,25 @@ app.post("/api/releases/job", async (request, response) => {
             totalFound,
             elapsedMs: diagnostics.elapsedMs(jobStartedAt),
             memory: diagnostics.processSnapshot()
+          });
+        },
+        onReleaseUpdate: ({ totalFound, index, release, phase }) => {
+          throwIfCancelled();
+          job.totalFound = totalFound;
+          job.releases[index] = release;
+          if (release?.category) {
+            categoryStore.ensureCategory(release.category);
+          }
+          ensureReleaseTags(release?.tags);
+          job.updatedAt = Date.now();
+          diagnostics.log("job.release_update", {
+            jobId,
+            phase,
+            totalFound,
+            index,
+            topicId: release?.topicId || diagnostics.topicIdFromUrl(release?.topicUrl),
+            screenshots: Array.isArray(release?.screenshots) ? release.screenshots.length : 0,
+            elapsedMs: diagnostics.elapsedMs(jobStartedAt)
           });
         },
         onProgress: ({ processed, totalFound, index, release }) => {
@@ -1358,6 +1401,7 @@ app.listen(config.app.port, () => {
     concurrency: config.tracker.concurrency,
     maxReleases: config.tracker.maxReleases,
     hardMaxReleases: config.tracker.hardMaxReleases,
+    imageCacheDir: imageCache.cacheDir,
     diagnostics: diagnostics.configSnapshot(),
     memory: diagnostics.processSnapshot()
   });

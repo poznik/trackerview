@@ -1,6 +1,6 @@
 {
   "name": "trackerview",
-  "version": "0.2.3",
+  "version": "0.2.5",
   "private": true,
   "description": "Web app for parsing tracker release pages into a table view",
   "main": "src/server.js",

@@ -318,10 +318,6 @@ function resolveScreenshotPreviewUrl(thumbUrl, fullUrl) {
     candidates.push(imgboxFromThumb);
   }
 
-  if (isSupportedScreenshotImageUrl(thumbUrl)) {
-    candidates.push(thumbUrl);
-  }
-
   const fastpicFromView = buildFastpicImageUrlFromView(fullUrl);
   if (isSupportedScreenshotImageUrl(fastpicFromView)) {
     candidates.push(fastpicFromView);
@@ -330,6 +326,10 @@ function resolveScreenshotPreviewUrl(thumbUrl, fullUrl) {
   const fastpicFromThumb = buildFastpicImageUrlFromThumb(thumbUrl);
   if (isSupportedScreenshotImageUrl(fastpicFromThumb)) {
     candidates.push(fastpicFromThumb);
+  }
+
+  if (isSupportedScreenshotImageUrl(thumbUrl)) {
+    candidates.push(thumbUrl);
   }
 
   return candidates.find(Boolean) || "";
@@ -1248,12 +1248,17 @@ async function enrichReleaseScreenshots(release, options = {}) {
       const fullUrl =
         fullUrlCandidate && isSupportedScreenshotDomainUrl(fullUrlCandidate) ? fullUrlCandidate : thumbUrl;
 
+      const resolvedPreviewUrl = resolveScreenshotPreviewUrl(thumbUrl, fullUrl) || thumbUrl;
       let previewUrl = toAbsoluteHttpUrl(rawScreenshot?.previewUrl || "", release.topicUrl);
-      if (!previewUrl || !isSupportedScreenshotImageUrl(previewUrl)) {
-        previewUrl = resolveScreenshotPreviewUrl(thumbUrl, fullUrl) || thumbUrl;
+      if (
+        !previewUrl ||
+        !isSupportedScreenshotImageUrl(previewUrl) ||
+        (isFastpicViewPageUrl(fullUrl) && !isFastpicBigImageUrl(previewUrl))
+      ) {
+        previewUrl = resolvedPreviewUrl;
       }
 
-      if (isFastpicViewPageUrl(fullUrl)) {
+      if (isFastpicViewPageUrl(fullUrl) && !isFastpicBigImageUrl(previewUrl)) {
         let pending = resolvedFastpicViewUrls.get(fullUrl);
         if (!pending) {
           fastpicViewPages += 1;
@@ -1318,6 +1323,14 @@ function buildCachedRelease(release) {
     seeds: "-",
     fromCache: true
   };
+}
+
+function publishReleaseUpdate(options, payload) {
+  if (typeof options?.onReleaseUpdate !== "function") {
+    return;
+  }
+
+  options.onReleaseUpdate(payload);
 }
 
 async function collectTopicLinksFromCollectionPages(client, pageUrl, firstPage, options) {
@@ -1627,6 +1640,12 @@ async function parseReleasesFromCollection(client, pageUrl, options) {
         const parseStartedAt = diagnostics.startTimer();
         release = parseReleasePage(pageUrl, listPage.text);
         parseMs = diagnostics.elapsedMs(parseStartedAt);
+        publishReleaseUpdate(runtimeOptions, {
+          index: 0,
+          totalFound: 1,
+          release,
+          phase: "parsed"
+        });
         const enrichStartedAt = diagnostics.startTimer();
         release = await enrichReleaseScreenshots(release, runtimeOptions);
         enrichMs = diagnostics.elapsedMs(enrichStartedAt);
@@ -1634,6 +1653,12 @@ async function parseReleasesFromCollection(client, pageUrl, options) {
           releaseCache.upsert(release);
         }
       } else {
+        publishReleaseUpdate(runtimeOptions, {
+          index: 0,
+          totalFound: 1,
+          release,
+          phase: "cached"
+        });
         const enrichStartedAt = diagnostics.startTimer();
         release = await enrichReleaseScreenshots(release, runtimeOptions);
         enrichMs = diagnostics.elapsedMs(enrichStartedAt);
@@ -1718,6 +1743,12 @@ async function parseReleasesFromCollection(client, pageUrl, options) {
           const parseStartedAt = diagnostics.startTimer();
           release = parseReleasePage(topicUrl, page.text);
           parseMs = diagnostics.elapsedMs(parseStartedAt);
+          publishReleaseUpdate(runtimeOptions, {
+            index,
+            totalFound: topicLinks.length,
+            release,
+            phase: "parsed"
+          });
           const enrichStartedAt = diagnostics.startTimer();
           release = await enrichReleaseScreenshots(release, runtimeOptions);
           enrichMs = diagnostics.elapsedMs(enrichStartedAt);
@@ -1725,6 +1756,12 @@ async function parseReleasesFromCollection(client, pageUrl, options) {
             releaseCache.upsert(release);
           }
         } else {
+          publishReleaseUpdate(runtimeOptions, {
+            index,
+            totalFound: topicLinks.length,
+            release,
+            phase: "cached"
+          });
           const enrichStartedAt = diagnostics.startTimer();
           release = await enrichReleaseScreenshots(release, runtimeOptions);
           enrichMs = diagnostics.elapsedMs(enrichStartedAt);

@@ -93,6 +93,9 @@ const config = {
       valueFromEnvOrConfig("TRACKER_USER_AGENT", ["tracker", "user_agent"], "TrackerViewBot/0.1 (+https://localhost)")
     )
   },
+  cache: {
+    picsDir: String(valueFromEnvOrConfig("TRACKERVIEW_PICS_CACHE_DIR", ["cache", "pics_dir"], "cache/pics"))
+  },
   diagnostics: {
     enabled: toBoolean(
       valueFromEnvOrConfig("TRACKERVIEW_DIAGNOSTICS", ["diagnostics", "enabled"], false),

@@ -147,6 +147,7 @@ Update-скрипт останавливает локальный Node.js-про
 | `tracker.concurrency` | `4` | нет | Параллелизм парсинга страниц релизов |
 | `tracker.request_timeout_ms` | `25000` | нет | HTTP timeout для запросов к трекеру |
 | `tracker.user_agent` | `TrackerViewBot/0.1 (+https://localhost)` | нет | User-Agent запросов к трекеру |
+| `cache.pics_dir` | `cache/pics` | нет | Локальная папка кеша картинок, отдаваемых через `/cache/pics/...` |
 | `diagnostics.enabled` | `false` | нет | Включает расширенные JSON-логи производительности |
 | `diagnostics.log_requests` | `true` | нет | Логирует HTTP-запросы к трекеру/внешним страницам: статус, байты, длительность |
 | `diagnostics.log_release_details` | `true` | нет | Логирует подробности по каждому релизу: cache hit/miss, fetch/parse/enrich timings |

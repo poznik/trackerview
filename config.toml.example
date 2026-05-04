@@ -14,6 +14,9 @@ concurrency = 4
 request_timeout_ms = 25000
 user_agent = "TrackerViewBot/0.1 (+https://localhost)"
 
+[cache]
+pics_dir = "cache/pics"
+
 [diagnostics]
 enabled = false
 log_requests = true
