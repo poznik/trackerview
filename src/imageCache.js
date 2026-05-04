@@ -8,7 +8,13 @@ const diagnostics = require("./diagnostics");
 
 const CACHE_ROUTE_PREFIX = "/cache/pics";
 const DEFAULT_MAX_IMAGE_BYTES = 50 * 1024 * 1024;
+const DEFAULT_DOWNLOAD_CONCURRENCY = 3;
 const SUPPORTED_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "gif", "bmp", "avif"]);
+const PRIORITY_VALUES = {
+  poster: 0,
+  preview: 1,
+  rest: 2
+};
 
 const CONTENT_TYPES = {
   jpg: "image/jpeg",
@@ -88,6 +94,11 @@ function contentTypeForFileName(fileName) {
   return CONTENT_TYPES[extension] || "application/octet-stream";
 }
 
+function normalizePriority(rawPriority) {
+  const value = String(rawPriority || "").trim().toLowerCase();
+  return Object.prototype.hasOwnProperty.call(PRIORITY_VALUES, value) ? value : "rest";
+}
+
 async function fileExists(filePath) {
   try {
     const stat = await fs.promises.stat(filePath);
@@ -109,9 +120,16 @@ function createImageCache(options = {}) {
       ? Math.max(1024, Number.parseInt(String(options.maxImageBytes), 10))
       : DEFAULT_MAX_IMAGE_BYTES;
   const userAgent = String(options.userAgent || "TrackerViewBot/0.1 (+https://localhost)");
+  const downloadConcurrency =
+    Number.isFinite(options.downloadConcurrency) && options.downloadConcurrency > 0
+      ? Math.max(1, Number.parseInt(String(options.downloadConcurrency), 10))
+      : DEFAULT_DOWNLOAD_CONCURRENCY;
   const pendingDownloads = new Map();
+  const downloadQueue = [];
+  let activeDownloads = 0;
+  let sequence = 0;
 
-  function toCacheUrl(rawUrl) {
+  function toCacheUrl(rawUrl, options = {}) {
     const value = String(rawUrl || "").trim();
     if (!value || isCacheUrl(value, routePrefix)) {
       return value;
@@ -127,7 +145,8 @@ function createImageCache(options = {}) {
       return value;
     }
 
-    return `${routePrefix}/${fileName}?u=${encodeURIComponent(normalizedUrl)}`;
+    const priority = normalizePriority(options.priority);
+    return `${routePrefix}/${fileName}?p=${priority}&u=${encodeURIComponent(normalizedUrl)}`;
   }
 
   function rewriteRelease(release) {
@@ -137,20 +156,21 @@ function createImageCache(options = {}) {
 
     const nextRelease = {
       ...release,
-      posterUrl: toCacheUrl(release.posterUrl)
+      posterUrl: toCacheUrl(release.posterUrl, { priority: "poster" })
     };
 
     if (Array.isArray(release.screenshots)) {
-      nextRelease.screenshots = release.screenshots.map((screenshot) => {
+      nextRelease.screenshots = release.screenshots.map((screenshot, index) => {
         if (!screenshot || typeof screenshot !== "object") {
           return screenshot;
         }
 
+        const screenshotPriority = index < 3 ? "preview" : "rest";
         return {
           ...screenshot,
-          thumbUrl: toCacheUrl(screenshot.thumbUrl),
-          previewUrl: toCacheUrl(screenshot.previewUrl),
-          fullUrl: toCacheUrl(screenshot.fullUrl)
+          thumbUrl: toCacheUrl(screenshot.thumbUrl, { priority: screenshotPriority }),
+          previewUrl: toCacheUrl(screenshot.previewUrl, { priority: screenshotPriority }),
+          fullUrl: toCacheUrl(screenshot.fullUrl, { priority: "rest" })
         };
       });
     }
@@ -183,7 +203,44 @@ function createImageCache(options = {}) {
     return { ok: true, normalizedUrl };
   }
 
-  async function downloadImage(normalizedUrl, targetPath, fileName) {
+  function drainQueue() {
+    while (activeDownloads < downloadConcurrency && downloadQueue.length > 0) {
+      downloadQueue.sort((left, right) => {
+        const priorityDelta = PRIORITY_VALUES[left.priority] - PRIORITY_VALUES[right.priority];
+        if (priorityDelta !== 0) {
+          return priorityDelta;
+        }
+        return left.sequence - right.sequence;
+      });
+
+      const item = downloadQueue.shift();
+      activeDownloads += 1;
+      downloadImage(item.normalizedUrl, item.targetPath, item.fileName, item.priority)
+        .then(item.resolve, item.reject)
+        .finally(() => {
+          activeDownloads -= 1;
+          drainQueue();
+        });
+    }
+  }
+
+  function enqueueDownload(normalizedUrl, targetPath, fileName, priority) {
+    return new Promise((resolve, reject) => {
+      downloadQueue.push({
+        normalizedUrl,
+        targetPath,
+        fileName,
+        priority: normalizePriority(priority),
+        sequence,
+        resolve,
+        reject
+      });
+      sequence += 1;
+      drainQueue();
+    });
+  }
+
+  async function downloadImage(normalizedUrl, targetPath, fileName, priority = "rest") {
     const startedAt = diagnostics.startTimer();
     const tmpPath = `${targetPath}.tmp-${process.pid}-${crypto.randomBytes(8).toString("hex")}`;
     const controller = new AbortController();
@@ -234,6 +291,7 @@ function createImageCache(options = {}) {
       diagnostics.log("image_cache.download.done", {
         imageUrl: normalizedUrl,
         fileName,
+        priority,
         bytes,
         durationMs: diagnostics.elapsedMs(startedAt)
       });
@@ -246,6 +304,7 @@ function createImageCache(options = {}) {
       diagnostics.log("image_cache.download.error", {
         imageUrl: normalizedUrl,
         fileName,
+        priority,
         bytes,
         durationMs: diagnostics.elapsedMs(startedAt),
         error: error.message
@@ -256,7 +315,7 @@ function createImageCache(options = {}) {
     }
   }
 
-  async function ensureCached(normalizedUrl, fileName) {
+  async function ensureCached(normalizedUrl, fileName, priority = "rest") {
     const targetPath = targetPathForFileName(fileName);
     if (await fileExists(targetPath)) {
       return { targetPath, hit: true };
@@ -264,7 +323,7 @@ function createImageCache(options = {}) {
 
     let pending = pendingDownloads.get(fileName);
     if (!pending) {
-      pending = downloadImage(normalizedUrl, targetPath, fileName).finally(() => {
+      pending = enqueueDownload(normalizedUrl, targetPath, fileName, priority).finally(() => {
         pendingDownloads.delete(fileName);
       });
       pendingDownloads.set(fileName, pending);
@@ -295,7 +354,8 @@ function createImageCache(options = {}) {
     }
 
     try {
-      const result = await ensureCached(validation.normalizedUrl, fileName);
+      const priority = normalizePriority(request.query?.p);
+      const result = await ensureCached(validation.normalizedUrl, fileName, priority);
       return sendCachedFile(response, result.targetPath, fileName, result.hit);
     } catch (error) {
       return response.status(502).send(error.message || "Failed to cache image.");

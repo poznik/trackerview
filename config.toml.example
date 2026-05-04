@@ -16,6 +16,7 @@ user_agent = "TrackerViewBot/0.1 (+https://localhost)"
 
 [cache]
 pics_dir = "cache/pics"
+pics_concurrency = 3
 
 [diagnostics]
 enabled = false

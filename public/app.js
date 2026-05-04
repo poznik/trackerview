@@ -1089,6 +1089,7 @@ function createPosterElement(release) {
   image.src = release.posterUrl;
   image.alt = release.title || "Poster";
   image.loading = "lazy";
+  image.setAttribute("fetchpriority", "high");
   image.referrerPolicy = "no-referrer";
 
   image.addEventListener("mouseenter", (event) => showImagePreview(event, image));
@@ -1114,7 +1115,7 @@ function createThumbnailsStrip(release) {
   const strip = document.createElement("div");
   strip.className = "card-thumbs";
 
-  for (const screenshot of screenshots) {
+  for (const [index, screenshot] of screenshots.entries()) {
     const thumbUrl = String(screenshot?.thumbUrl || "").trim();
     const fullUrl = String(screenshot?.fullUrl || thumbUrl).trim();
     const previewUrl = String(screenshot?.previewUrl || "").trim();
@@ -1126,6 +1127,7 @@ function createThumbnailsStrip(release) {
     image.className = "card-thumb";
     image.loading = "lazy";
     image.decoding = "async";
+    image.setAttribute("fetchpriority", index < 3 ? "high" : "low");
     image.referrerPolicy = "no-referrer";
 
     image.addEventListener("mouseenter", (event) =>
@@ -1481,7 +1483,7 @@ function buildDrawerContent(release) {
 
     const grid = document.createElement("div");
     grid.className = "drawer-screenshots";
-    for (const screenshot of screenshots) {
+    for (const [index, screenshot] of screenshots.entries()) {
       const thumbUrl = String(screenshot?.thumbUrl || "").trim();
       const fullUrl = String(screenshot?.fullUrl || thumbUrl).trim();
       if (!thumbUrl) continue;
@@ -1495,6 +1497,7 @@ function buildDrawerContent(release) {
       image.alt = "Screenshot";
       image.loading = "lazy";
       image.decoding = "async";
+      image.setAttribute("fetchpriority", index < 3 ? "high" : "low");
       image.referrerPolicy = "no-referrer";
       image.addEventListener("error", () => link.remove());
       link.appendChild(image);

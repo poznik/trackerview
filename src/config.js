@@ -94,7 +94,11 @@ const config = {
     )
   },
   cache: {
-    picsDir: String(valueFromEnvOrConfig("TRACKERVIEW_PICS_CACHE_DIR", ["cache", "pics_dir"], "cache/pics"))
+    picsDir: String(valueFromEnvOrConfig("TRACKERVIEW_PICS_CACHE_DIR", ["cache", "pics_dir"], "cache/pics")),
+    picsConcurrency: toNumber(
+      valueFromEnvOrConfig("TRACKERVIEW_PICS_CACHE_CONCURRENCY", ["cache", "pics_concurrency"], 3),
+      3
+    )
   },
   diagnostics: {
     enabled: toBoolean(

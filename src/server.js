@@ -42,6 +42,7 @@ const savedSearchStore = createSavedSearchStore(path.join(__dirname, "..", "data
 const releaseCacheStore = createReleaseCacheStore(path.join(__dirname, "..", "data", "releases-cache.json"));
 const imageCache = createImageCache({
   cacheDir: config.cache.picsDir,
+  downloadConcurrency: config.cache.picsConcurrency,
   timeoutMs: config.tracker.requestTimeoutMs,
   userAgent: config.tracker.userAgent
 });
@@ -1402,6 +1403,7 @@ app.listen(config.app.port, () => {
     maxReleases: config.tracker.maxReleases,
     hardMaxReleases: config.tracker.hardMaxReleases,
     imageCacheDir: imageCache.cacheDir,
+    imageCacheConcurrency: config.cache.picsConcurrency,
     diagnostics: diagnostics.configSnapshot(),
     memory: diagnostics.processSnapshot()
   });
