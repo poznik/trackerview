@@ -224,6 +224,23 @@ test("enrichReleaseScreenshots derives Fastpic big image URL without fetching vi
   }
 });
 
+test("enrichReleaseScreenshots drops expiring Fastpic signatures from preview URLs", async () => {
+  const unsignedUrl =
+    "https://i126.fastpic.org/big/2025/1120/f2/_8c5b0b36034fd73ca4fd01b7ccc8e0f2.jpg";
+  const release = await enrichReleaseScreenshots({
+    topicUrl: TOPIC_URL,
+    screenshots: [
+      {
+        thumbUrl: "https://i126.fastpic.org/thumb/2025/1120/f2/_8c5b0b36034fd73ca4fd01b7ccc8e0f2.jpg",
+        fullUrl: "https://fastpic.org/view/126/2025/1120/_8c5b0b36034fd73ca4fd01b7ccc8e0f2.jpg.html",
+        previewUrl: `${unsignedUrl}?md5=expired&expires=1`
+      }
+    ]
+  });
+
+  assert.equal(release.screenshots[0].previewUrl, unsignedUrl);
+});
+
 test("parseReleasesFromCollection publishes parsed release before screenshot enrichment progress", async () => {
   const listUrl = "https://tracker.example/forum/viewforum.php?f=10";
   const topicUrl = "https://tracker.example/forum/viewtopic.php?t=12345";

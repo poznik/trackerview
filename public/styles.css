@@ -404,6 +404,36 @@ input[type="number"] {
   background: var(--surface-hover);
   border-color: var(--border-strong);
 }
+.tag-chip-favorite {
+  background: rgba(224, 162, 58, 0.18);
+  border-color: rgba(224, 162, 58, 0.62);
+  color: #f3c065;
+}
+.tag-chip-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.tag-favorite-btn {
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+}
+.tag-favorite-btn:hover,
+.tag-favorite-btn-active {
+  color: #f3c065;
+}
 .tag-chip input,
 .category-chip input,
 .quality-chip input {
@@ -475,6 +505,14 @@ input[type="number"] {
 .release-card.release-card-downloaded {
   background: var(--surface-2);
   opacity: 0.78;
+}
+.release-card.release-card-favorite {
+  background: linear-gradient(90deg, rgba(224, 162, 58, 0.16), var(--surface) 34%);
+  border-color: rgba(224, 162, 58, 0.55);
+  box-shadow: inset 3px 0 0 rgba(224, 162, 58, 0.72);
+}
+.release-card.release-card-favorite.release-card-downloaded {
+  background: linear-gradient(90deg, rgba(224, 162, 58, 0.14), var(--surface-2) 34%);
 }
 .release-card.release-card-error {
   border-color: rgba(196, 57, 61, 0.4);
@@ -677,6 +715,11 @@ input[type="number"] {
 .release-tag-muted {
   color: var(--text-muted);
 }
+.release-tag-favorite {
+  background: rgba(224, 162, 58, 0.16);
+  border-color: rgba(224, 162, 58, 0.55);
+  color: #f3c065;
+}
 
 .card-description {
   font-size: 13px;
@@ -689,7 +732,10 @@ input[type="number"] {
 }
 
 .card-thumbs {
-  display: flex;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: max-content;
+  grid-template-rows: repeat(2, 112px);
   gap: 6px;
   overflow-x: auto;
   padding-bottom: 4px;
@@ -704,9 +750,8 @@ input[type="number"] {
   border-radius: 999px;
 }
 .card-thumb {
-  height: 56px;
+  height: 112px;
   width: auto;
-  flex-shrink: 0;
   border-radius: var(--radius-sm);
   background: var(--surface-2);
   cursor: zoom-in;
@@ -991,7 +1036,8 @@ a.card-size:hover {
     height: auto;
     aspect-ratio: 2 / 3;
   }
-  .card-thumb { height: 44px; }
+  .card-thumbs { grid-template-rows: repeat(2, 88px); }
+  .card-thumb { height: 88px; }
   .source-group input[type="text"] { padding-right: 12px; }
   .source-group select {
     position: static;

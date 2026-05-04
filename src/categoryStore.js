@@ -39,11 +39,13 @@ function createCategoryStore(filePath) {
       for (const item of list) {
         const name = normalizeCategoryName(item?.name);
         const enabled = typeof item?.enabled === "boolean" ? item.enabled : true;
+        const favorite = typeof item?.favorite === "boolean" ? item.favorite : false;
         const createdAt = Number.isFinite(item?.createdAt) ? item.createdAt : Date.now();
         const updatedAt = Number.isFinite(item?.updatedAt) ? item.updatedAt : createdAt;
         categories.set(name, {
           name,
           enabled,
+          favorite,
           createdAt,
           updatedAt
         });
@@ -117,13 +119,16 @@ function createCategoryStore(filePath) {
     for (const entry of entries || []) {
       const name = normalizeCategoryName(entry?.name);
       const hasEnabled = typeof entry?.enabled === "boolean";
+      const hasFavorite = typeof entry?.favorite === "boolean";
       const enabled = hasEnabled ? entry.enabled : defaultEnabled;
+      const favorite = hasFavorite ? entry.favorite : false;
 
       if (!categories.has(name)) {
         const now = Date.now();
         categories.set(name, {
           name,
           enabled,
+          favorite,
           createdAt: now,
           updatedAt: now
         });
@@ -135,6 +140,15 @@ function createCategoryStore(filePath) {
         const existing = categories.get(name);
         if (existing.enabled !== enabled) {
           existing.enabled = enabled;
+          existing.updatedAt = Date.now();
+          changed = true;
+        }
+      }
+
+      if (hasFavorite) {
+        const existing = categories.get(name);
+        if (existing.favorite !== favorite) {
+          existing.favorite = favorite;
           existing.updatedAt = Date.now();
           changed = true;
         }

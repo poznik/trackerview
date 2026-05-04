@@ -57,6 +57,23 @@ function normalizeImageUrl(rawUrl) {
   return parsed.toString();
 }
 
+function normalizeFastpicCacheSourceUrl(rawUrl) {
+  const parsed = parseSafeUrl(rawUrl);
+  if (!parsed) {
+    return normalizeImageUrl(rawUrl);
+  }
+
+  const normalized = normalizeImageUrl(parsed.toString());
+  if (!normalized || !isFastpicBigImageUrl(normalized)) {
+    return normalized;
+  }
+
+  parsed.hash = "";
+  parsed.searchParams.delete("md5");
+  parsed.searchParams.delete("expires");
+  return normalizeImageUrl(parsed.toString());
+}
+
 function extensionFromUrl(rawUrl) {
   const parsed = parseSafeUrl(rawUrl);
   if (!parsed) {
@@ -212,7 +229,7 @@ function createImageCache(options = {}) {
       return value;
     }
 
-    const normalizedUrl = normalizeImageUrl(value);
+    const normalizedUrl = normalizeFastpicCacheSourceUrl(value);
     if (!normalizedUrl || !isSupportedImageUrl(normalizedUrl)) {
       return value;
     }
@@ -268,16 +285,28 @@ function createImageCache(options = {}) {
       return { ok: false, status: 404, error: "Invalid cache file name." };
     }
 
-    const normalizedUrl = normalizeImageUrl(rawUrl);
+    const originalUrl = normalizeImageUrl(rawUrl);
+    const normalizedUrl = normalizeFastpicCacheSourceUrl(rawUrl);
     if (!normalizedUrl || !isSupportedImageUrl(normalizedUrl)) {
       return { ok: false, status: 404, error: "Image URL is required for cache miss." };
     }
 
-    if (fileNameForImageUrl(normalizedUrl).toLowerCase() !== fileName.toLowerCase()) {
+    const canonicalFileName = fileNameForImageUrl(normalizedUrl).toLowerCase();
+    const originalFileName = originalUrl ? fileNameForImageUrl(originalUrl).toLowerCase() : "";
+    const expectedFileNames = new Set([canonicalFileName]);
+    if (originalUrl && originalUrl !== normalizedUrl) {
+      expectedFileNames.add(originalFileName);
+    }
+
+    if (!expectedFileNames.has(fileName.toLowerCase())) {
       return { ok: false, status: 400, error: "Cache key does not match image URL." };
     }
 
-    return { ok: true, normalizedUrl };
+    return {
+      ok: true,
+      normalizedUrl,
+      refreshExisting: Boolean(originalFileName && originalFileName !== canonicalFileName && originalFileName === fileName.toLowerCase())
+    };
   }
 
   function drainQueue() {
@@ -458,17 +487,27 @@ function createImageCache(options = {}) {
   async function handleRequest(request, response) {
     const fileName = path.basename(String(request.params?.fileName || ""));
     const targetPath = targetPathForFileName(fileName);
-    if (await fileExists(targetPath)) {
+    const rawUrl = request.query?.u;
+
+    if (!rawUrl && (await fileExists(targetPath))) {
       diagnostics.log("image_cache.hit", { fileName });
       return sendCachedFile(response, targetPath, fileName, true);
     }
 
-    const validation = validateRequest(fileName, request.query?.u);
+    const validation = validateRequest(fileName, rawUrl);
     if (!validation.ok) {
       return response.status(validation.status).send(validation.error);
     }
 
+    if (!validation.refreshExisting && (await fileExists(targetPath))) {
+      diagnostics.log("image_cache.hit", { fileName });
+      return sendCachedFile(response, targetPath, fileName, true);
+    }
+
     try {
+      if (validation.refreshExisting) {
+        await fs.promises.rm(targetPath, { force: true });
+      }
       const priority = normalizePriority(request.query?.p);
       const result = await ensureCached(validation.normalizedUrl, fileName, priority);
       return sendCachedFile(response, result.targetPath, fileName, result.hit);

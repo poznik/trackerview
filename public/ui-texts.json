@@ -18,6 +18,8 @@
   "filters": "Фильтры",
   "tag_filters_title": "Теги",
   "tag_filters_empty": "Теги появятся после загрузки релизов.",
+  "tag_favorite_add": "Добавить в избранное",
+  "tag_favorite_remove": "Убрать из избранного",
   "status_idle": "Ожидание",
   "processed_prefix": "Обработано:",
   "table_poster": "Постер",

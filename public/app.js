@@ -64,6 +64,8 @@ const DEFAULT_UI_TEXTS = {
   sort_date: "Date",
   tag_filters_title: "Tags",
   tag_filters_empty: "Tags will appear after loading releases.",
+  tag_favorite_add: "Add to favorites",
+  tag_favorite_remove: "Remove from favorites",
   quality_filters_title: "Quality",
   quality_filters_empty: "Quality filters will appear after loading releases.",
   category_filters_empty: "Categories will appear after loading releases.",
@@ -141,6 +143,7 @@ let availableQualityOptions = [];
 const downloadedReleaseKeys = new Set();
 const selectedReleaseVariantByGroupKey = new Map();
 let lastFocusBeforeDrawer = null;
+let activeHoverPreviewToken = 0;
 
 function setCsrfToken(value) {
   csrfToken = String(value || "").trim();
@@ -431,6 +434,32 @@ function normalizeCategoryName(value) {
 
 function normalizeTagName(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function normalizeTagState(value, fallback = {}) {
+  if (typeof value === "boolean") {
+    return {
+      enabled: value,
+      favorite: false
+    };
+  }
+
+  const source = value && typeof value === "object" ? value : fallback;
+  return {
+    enabled: typeof source?.enabled === "boolean" ? source.enabled : true,
+    favorite: typeof source?.favorite === "boolean" ? source.favorite : false
+  };
+}
+
+function getTagState(name) {
+  return normalizeTagState(tagFilterState.get(normalizeTagName(name)));
+}
+
+function setTagState(name, value) {
+  const normalizedName = normalizeTagName(name);
+  if (!normalizedName) return;
+  const current = getTagState(normalizedName);
+  tagFilterState.set(normalizedName, normalizeTagState(value, current));
 }
 
 function normalizeReleaseTags(release) {
@@ -896,6 +925,26 @@ function sortReleasesByDate(releases, sortOrder = releaseDateSortOrder) {
   });
 }
 
+function releaseFavoriteTags(release) {
+  return normalizeReleaseTags(release).filter((tagName) => getTagState(tagName).favorite);
+}
+
+function releaseHasFavoriteTag(release) {
+  return releaseFavoriteTags(release).length > 0;
+}
+
+function sortReleasesByFavoriteThenDate(releases, sortOrder = releaseDateSortOrder) {
+  const sortedByDate = sortReleasesByDate(releases, sortOrder);
+  return sortedByDate.sort((left, right) => {
+    const leftFavorite = releaseHasFavoriteTag(left);
+    const rightFavorite = releaseHasFavoriteTag(right);
+    if (leftFavorite !== rightFavorite) {
+      return leftFavorite ? -1 : 1;
+    }
+    return 0;
+  });
+}
+
 function compareReleaseVariantsByQuality(left, right) {
   const leftQuality = resolveReleaseQualityInfo(left);
   const rightQuality = resolveReleaseQualityInfo(right);
@@ -1014,6 +1063,9 @@ function createReleaseTagsElement(release, { compact = true } = {}) {
   for (const tagName of visibleTags) {
     const tag = document.createElement("span");
     tag.className = "release-tag";
+    if (getTagState(tagName).favorite) {
+      tag.classList.add("release-tag-favorite");
+    }
     tag.textContent = tagName;
     wrap.appendChild(tag);
   }
@@ -1029,6 +1081,7 @@ function createReleaseTagsElement(release, { compact = true } = {}) {
 }
 
 function hidePosterPreview() {
+  activeHoverPreviewToken += 1;
   hoverPanel.style.display = "none";
   hoverPanelImage.onerror = null;
   hoverPanelImage.src = "";
@@ -1053,24 +1106,45 @@ function showImagePreview(event, image, preferredUrl = "", scale = 2, fallbackTo
   const sourceUrl = preferredUrl || image.currentSrc || image.src;
   const fallbackUrl = fallbackToThumb ? image.currentSrc || image.src : "";
   if (!sourceUrl) return;
+  const hoverToken = activeHoverPreviewToken + 1;
+  activeHoverPreviewToken = hoverToken;
 
   const normalizedScale = Number.isFinite(scale) && scale > 0 ? scale : 2;
   const previewWidth = Math.round(image.clientWidth * normalizedScale);
   hoverPanel.style.width = `${Math.max(120, previewWidth)}px`;
 
-  hoverPanelImage.onerror = () => {
+  function keepFallbackOrHide() {
     hoverPanelImage.onerror = null;
-    if (fallbackUrl && sourceUrl !== fallbackUrl) {
+    if (fallbackUrl) {
       hoverPanelImage.src = fallbackUrl;
       return;
     }
     hidePosterPreview();
-  };
+  }
 
-  hoverPanelImage.src = sourceUrl;
+  hoverPanelImage.onerror = keepFallbackOrHide;
+  hoverPanelImage.src = fallbackUrl && sourceUrl !== fallbackUrl ? fallbackUrl : sourceUrl;
   hoverPanelImage.alt = image.alt || "Preview";
   hoverPanel.style.display = "block";
   movePosterPreview(event);
+
+  if (fallbackUrl && sourceUrl !== fallbackUrl) {
+    const loader = new Image();
+    loader.decoding = "async";
+    loader.referrerPolicy = image.referrerPolicy || "no-referrer";
+    loader.onload = () => {
+      if (activeHoverPreviewToken !== hoverToken || hoverPanel.style.display === "none") {
+        return;
+      }
+      hoverPanelImage.onerror = keepFallbackOrHide;
+      hoverPanelImage.src = sourceUrl;
+      movePosterPreview(event);
+    };
+    loader.onerror = () => {
+      // Keep the stretched thumbnail visible when the large preview is still unavailable.
+    };
+    loader.src = sourceUrl;
+  }
 }
 
 function createPosterElement(release) {
@@ -1131,7 +1205,7 @@ function createThumbnailsStrip(release) {
     image.referrerPolicy = "no-referrer";
 
     image.addEventListener("mouseenter", (event) =>
-      showImagePreview(event, image, previewUrl || fullUrl || thumbUrl, 6, true)
+      showImagePreview(event, image, previewUrl || fullUrl || thumbUrl, 3, true)
     );
     image.addEventListener("mousemove", (event) => movePosterPreview(event));
     image.addEventListener("mouseleave", () => hidePosterPreview());
@@ -1270,6 +1344,7 @@ function createReleaseCard(release) {
   }
 
   applyDownloadedCardState(card, release);
+  card.classList.toggle("release-card-favorite", releaseHasFavoriteTag(release));
   card.appendChild(createPosterElement(release));
 
   const body = document.createElement("div");
@@ -1665,10 +1740,15 @@ function registerQualityFiltersFromReleases(releases) {
 
 function buildTagPayload(entries) {
   return entries
-    .map((entry) => ({
-      name: normalizeTagName(entry.name),
-      enabled: Boolean(entry.enabled)
-    }))
+    .map((entry) => {
+      const name = normalizeTagName(entry.name);
+      const current = getTagState(name);
+      return {
+        name,
+        enabled: typeof entry.enabled === "boolean" ? entry.enabled : current.enabled,
+        favorite: typeof entry.favorite === "boolean" ? entry.favorite : current.favorite
+      };
+    })
     .filter((entry) => entry.name);
 }
 
@@ -1687,13 +1767,15 @@ function mergeTagsIntoState(tags) {
     const name = normalizeTagName(tag?.name);
     if (!name) continue;
     const enabled = typeof tag?.enabled === "boolean" ? tag.enabled : true;
+    const favorite = typeof tag?.favorite === "boolean" ? tag.favorite : false;
     if (!tagFilterState.has(name)) {
-      tagFilterState.set(name, enabled);
+      setTagState(name, { enabled, favorite });
       changed = true;
       continue;
     }
-    if (tagFilterState.get(name) !== enabled) {
-      tagFilterState.set(name, enabled);
+    const current = getTagState(name);
+    if (current.enabled !== enabled || current.favorite !== favorite) {
+      setTagState(name, { enabled, favorite });
       changed = true;
     }
   }
@@ -1703,7 +1785,11 @@ function mergeTagsIntoState(tags) {
 function renderTagFilters() {
   tagFiltersNode.innerHTML = "";
   const tags = Array.from(tagFilterState.entries()).sort((left, right) =>
-    left[0].localeCompare(right[0], "ru", { sensitivity: "base" })
+    getTagState(left[0]).favorite !== getTagState(right[0]).favorite
+      ? getTagState(left[0]).favorite
+        ? -1
+        : 1
+      : left[0].localeCompare(right[0], "ru", { sensitivity: "base" })
   );
 
   if (tags.length === 0) {
@@ -1714,19 +1800,24 @@ function renderTagFilters() {
     return;
   }
 
-  for (const [name, enabled] of tags) {
+  for (const [name] of tags) {
+    const state = getTagState(name);
+    const chip = document.createElement("div");
+    chip.className = state.favorite ? "tag-chip tag-chip-favorite" : "tag-chip";
+
     const label = document.createElement("label");
-    label.className = "tag-chip";
+    label.className = "tag-chip-filter";
 
     const input = document.createElement("input");
     input.type = "checkbox";
-    input.checked = enabled;
+    input.checked = state.enabled;
 
     input.addEventListener("change", async () => {
-      tagFilterState.set(name, input.checked);
+      const nextState = { ...getTagState(name), enabled: input.checked };
+      setTagState(name, nextState);
       updateFeedView();
       try {
-        await upsertTagsOnServer([{ name, enabled: input.checked }]);
+        await upsertTagsOnServer([{ name, ...nextState }]);
       } catch (error) {
         setStatus(error.message || "Failed to save tag filter.", true);
       }
@@ -1734,9 +1825,33 @@ function renderTagFilters() {
 
     const text = document.createElement("span");
     text.textContent = name;
+
+    const favoriteButton = document.createElement("button");
+    favoriteButton.type = "button";
+    favoriteButton.className = state.favorite ? "tag-favorite-btn tag-favorite-btn-active" : "tag-favorite-btn";
+    favoriteButton.textContent = state.favorite ? "★" : "☆";
+    favoriteButton.title = state.favorite
+      ? resolveUiText("tag_favorite_remove", DEFAULT_UI_TEXTS.tag_favorite_remove)
+      : resolveUiText("tag_favorite_add", DEFAULT_UI_TEXTS.tag_favorite_add);
+    favoriteButton.setAttribute("aria-label", favoriteButton.title);
+    favoriteButton.setAttribute("aria-pressed", String(state.favorite));
+    favoriteButton.addEventListener("click", async () => {
+      const nextState = { ...getTagState(name), favorite: !getTagState(name).favorite };
+      setTagState(name, nextState);
+      renderTagFilters();
+      updateFeedView();
+      try {
+        await upsertTagsOnServer([{ name, ...nextState }]);
+      } catch (error) {
+        setStatus(error.message || "Failed to save favorite tag.", true);
+      }
+    });
+
     label.appendChild(input);
     label.appendChild(text);
-    tagFiltersNode.appendChild(label);
+    chip.appendChild(label);
+    chip.appendChild(favoriteButton);
+    tagFiltersNode.appendChild(chip);
   }
 }
 
@@ -1745,8 +1860,8 @@ function registerTagsFromReleases(releases) {
   for (const release of releases || []) {
     for (const tagName of normalizeReleaseTags(release)) {
       if (tagFilterState.has(tagName)) continue;
-      tagFilterState.set(tagName, true);
-      discovered.push({ name: tagName, enabled: true });
+      setTagState(tagName, { enabled: true, favorite: false });
+      discovered.push({ name: tagName, enabled: true, favorite: false });
     }
   }
   if (discovered.length > 0) {
@@ -1757,8 +1872,8 @@ function registerTagsFromReleases(releases) {
 
 function releaseMatchesTagFilters(release) {
   const releaseTagNames = new Set(normalizeReleaseTags(release));
-  for (const [name, enabled] of tagFilterState.entries()) {
-    if (enabled === false && releaseTagNames.has(name)) {
+  for (const [name] of tagFilterState.entries()) {
+    if (getTagState(name).enabled === false && releaseTagNames.has(name)) {
       return false;
     }
   }
@@ -1881,7 +1996,7 @@ function updateFeedView() {
     return;
   }
 
-  renderReleases(sortReleasesByDate(buildGroupedReleaseItems(visibleReleases), releaseDateSortOrder));
+  renderReleases(sortReleasesByFavoriteThenDate(buildGroupedReleaseItems(visibleReleases), releaseDateSortOrder));
 }
 
 async function loadClientConfig() {

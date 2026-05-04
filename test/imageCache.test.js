@@ -51,6 +51,26 @@ test("image cache rewrites release image URLs to local cache URLs", () => {
   );
 });
 
+test("image cache strips expiring Fastpic signatures from rewritten URLs", () => {
+  const cache = createImageCache({ cacheDir: "cache/pics" });
+  const unsignedUrl =
+    "https://i126.fastpic.org/big/2025/1120/f2/_8c5b0b36034fd73ca4fd01b7ccc8e0f2.jpg";
+  const signedUrl = `${unsignedUrl}?md5=expired&expires=1`;
+  const release = cache.rewriteRelease({
+    screenshots: [
+      {
+        thumbUrl: "https://i126.fastpic.org/thumb/2025/1120/f2/_8c5b0b36034fd73ca4fd01b7ccc8e0f2.jpg",
+        previewUrl: signedUrl,
+        fullUrl: "https://fastpic.org/view/126/2025/1120/_8c5b0b36034fd73ca4fd01b7ccc8e0f2.jpg.html"
+      }
+    ]
+  });
+
+  const previewUrl = new URL(release.screenshots[0].previewUrl, "http://localhost");
+  assert.equal(decodeURIComponent(previewUrl.searchParams.get("u")), unsignedUrl);
+  assert.match(previewUrl.pathname, new RegExp(`/${fileNameForImageUrl(unsignedUrl)}$`));
+});
+
 test("image cache serves existing file without downloading source again", async () => {
   const originalFetch = global.fetch;
   global.fetch = async () => {
@@ -218,6 +238,75 @@ test("image cache resolves signed Fastpic big image URL when unsigned URL return
     assert.deepEqual(calls, [unsignedUrl, viewUrl, signedUrl.replace(/&amp;/g, "&")]);
     assert.equal(headers["X-Image-Cache"], "MISS");
     assert.equal(await fs.readFile(sentFile, "hex"), "040506");
+  } finally {
+    global.fetch = originalFetch;
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("image cache refreshes expired Fastpic signed URLs through the stable big URL", async () => {
+  const originalFetch = global.fetch;
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "trackerview-pics-"));
+  const unsignedUrl =
+    "https://i126.fastpic.org/big/2025/1120/f2/_8c5b0b36034fd73ca4fd01b7ccc8e0f2.jpg";
+  const staleSignedUrl = `${unsignedUrl}?md5=expired&expires=1`;
+  const freshSignedUrl = `${unsignedUrl}?md5=fresh&expires=1777896000`;
+  const viewUrl =
+    "https://fastpic.org/view/126/2025/1120/_8c5b0b36034fd73ca4fd01b7ccc8e0f2.jpg.html";
+  const calls = [];
+
+  global.fetch = async (url) => {
+    const value = String(url);
+    calls.push(value);
+    if (value === staleSignedUrl) {
+      throw new Error("Stale signed URL should not be fetched.");
+    }
+    if (value === unsignedUrl) {
+      return new Response("<html>not an image</html>", {
+        headers: { "content-type": "text/html; charset=UTF-8" }
+      });
+    }
+    if (value === viewUrl) {
+      return new Response(`<img src="${freshSignedUrl}">`, {
+        headers: { "content-type": "text/html; charset=UTF-8" }
+      });
+    }
+    if (value === freshSignedUrl) {
+      return new Response(Buffer.from([7, 8, 9]), {
+        headers: { "content-type": "image/jpeg" }
+      });
+    }
+    throw new Error(`Unexpected URL: ${value}`);
+  };
+
+  try {
+    const cache = createImageCache({ cacheDir: tempDir });
+    const fileName = fileNameForImageUrl(normalizeImageUrl(staleSignedUrl));
+    await fs.writeFile(path.join(tempDir, fileName), Buffer.from("expired hotlink placeholder"));
+    let sentFile = "";
+    const response = {
+      setHeader() {},
+      sendFile(filePath) {
+        sentFile = filePath;
+        return this;
+      },
+      status(code) {
+        this.statusCode = code;
+        return this;
+      },
+      send(message) {
+        this.message = message;
+        return this;
+      }
+    };
+
+    await cache.handleRequest(
+      { params: { fileName }, query: { u: staleSignedUrl, p: "preview" } },
+      response
+    );
+
+    assert.deepEqual(calls, [unsignedUrl, viewUrl, freshSignedUrl]);
+    assert.equal(await fs.readFile(sentFile, "hex"), "070809");
   } finally {
     global.fetch = originalFetch;
     await fs.rm(tempDir, { recursive: true, force: true });

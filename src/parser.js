@@ -231,6 +231,23 @@ function isFastpicBigImageUrl(url) {
   return /\/big\//i.test(parsed.pathname);
 }
 
+function normalizeFastpicPreviewUrl(url) {
+  const parsed = parseSafeUrl(url);
+  if (!parsed) {
+    return url;
+  }
+
+  const normalized = parsed.toString();
+  if (!isFastpicBigImageUrl(normalized)) {
+    return normalized;
+  }
+
+  parsed.hash = "";
+  parsed.searchParams.delete("md5");
+  parsed.searchParams.delete("expires");
+  return parsed.toString();
+}
+
 function isImgboxDomainUrl(url) {
   const parsed = parseSafeUrl(url);
   if (!parsed) {
@@ -332,7 +349,8 @@ function resolveScreenshotPreviewUrl(thumbUrl, fullUrl) {
     candidates.push(thumbUrl);
   }
 
-  return candidates.find(Boolean) || "";
+  const candidate = candidates.find(Boolean) || "";
+  return normalizeFastpicPreviewUrl(candidate);
 }
 
 function extractFastpicDirectImageUrlFromViewPageHtml(viewUrl, html) {
@@ -351,26 +369,26 @@ function extractFastpicDirectImageUrlFromViewPageHtml(viewUrl, html) {
     }
 
     if (isFastpicBigImageUrl(src)) {
-      firstMatch = src;
+      firstMatch = normalizeFastpicPreviewUrl(src);
       return false;
     }
 
     if (!firstMatch) {
-      firstMatch = src;
+      firstMatch = normalizeFastpicPreviewUrl(src);
     }
 
     return;
   });
 
   if (isFastpicImageUrl(firstMatch)) {
-    return firstMatch;
+    return normalizeFastpicPreviewUrl(firstMatch);
   }
 
   const fallbackMatches = rawHtml.match(/https?:\/\/i\d+\.fastpic\.org\/big\/[^"'<>\\\s]+/gi) || [];
   for (const candidate of fallbackMatches) {
     const normalized = toAbsoluteHttpUrl(candidate, viewUrl);
     if (isFastpicImageUrl(normalized)) {
-      return normalized;
+      return normalizeFastpicPreviewUrl(normalized);
     }
   }
 
@@ -1270,7 +1288,7 @@ async function enrichReleaseScreenshots(release, options = {}) {
           const resolvedFastpicUrl = await pending;
           if (isFastpicImageUrl(resolvedFastpicUrl)) {
             fastpicResolved += 1;
-            previewUrl = resolvedFastpicUrl;
+            previewUrl = normalizeFastpicPreviewUrl(resolvedFastpicUrl);
           }
         } catch (error) {
           // Keep best-effort previewUrl already resolved above.
@@ -1280,7 +1298,7 @@ async function enrichReleaseScreenshots(release, options = {}) {
       return {
         thumbUrl,
         fullUrl,
-        previewUrl
+        previewUrl: normalizeFastpicPreviewUrl(previewUrl)
       };
     }
   );
