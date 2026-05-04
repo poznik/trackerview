@@ -1,4 +1,5 @@
 const cheerio = require("cheerio");
+const diagnostics = require("./diagnostics");
 const SCREENSHOTS_SCHEMA_VERSION = 5;
 const QUALITY_NA_LABEL = "N/A";
 const KNOWN_RELEASE_TAGS = [
@@ -1211,6 +1212,7 @@ async function mapWithConcurrency(items, limit, mapper, onItemComplete) {
 }
 
 async function enrichReleaseScreenshots(release, options = {}) {
+  const startedAt = diagnostics.startTimer();
   if (!release || typeof release !== "object" || release.error) {
     return release;
   }
@@ -1230,6 +1232,8 @@ async function enrichReleaseScreenshots(release, options = {}) {
       : 12000;
 
   const resolvedFastpicViewUrls = new Map();
+  let fastpicViewPages = 0;
+  let fastpicResolved = 0;
 
   const normalizedScreenshots = await mapWithConcurrency(
     screenshots,
@@ -1252,6 +1256,7 @@ async function enrichReleaseScreenshots(release, options = {}) {
       if (isFastpicViewPageUrl(fullUrl)) {
         let pending = resolvedFastpicViewUrls.get(fullUrl);
         if (!pending) {
+          fastpicViewPages += 1;
           pending = fetchFastpicDirectImageUrlFromViewPage(fullUrl, fastpicTimeoutMs);
           resolvedFastpicViewUrls.set(fullUrl, pending);
         }
@@ -1259,6 +1264,7 @@ async function enrichReleaseScreenshots(release, options = {}) {
         try {
           const resolvedFastpicUrl = await pending;
           if (isFastpicImageUrl(resolvedFastpicUrl)) {
+            fastpicResolved += 1;
             previewUrl = resolvedFastpicUrl;
           }
         } catch (error) {
@@ -1290,6 +1296,16 @@ async function enrichReleaseScreenshots(release, options = {}) {
     dedupedScreenshots.push(screenshot);
   }
 
+  diagnostics.log("screenshots.enrich.done", {
+    topicId: diagnostics.topicIdFromUrl(release.topicUrl),
+    inputCount: screenshots.length,
+    outputCount: dedupedScreenshots.length,
+    fastpicViewPages,
+    fastpicResolved,
+    concurrency: screenshotConcurrency,
+    durationMs: diagnostics.elapsedMs(startedAt)
+  });
+
   return {
     ...release,
     screenshots: dedupedScreenshots
@@ -1305,6 +1321,7 @@ function buildCachedRelease(release) {
 }
 
 async function collectTopicLinksFromCollectionPages(client, pageUrl, firstPage, options) {
+  const startedAt = diagnostics.startTimer();
   const maxReleases =
     Number.isFinite(options.maxReleases) && options.maxReleases > 0
       ? Math.max(1, Number.parseInt(String(options.maxReleases), 10))
@@ -1361,6 +1378,12 @@ async function collectTopicLinksFromCollectionPages(client, pageUrl, firstPage, 
 
   addTopicLinks(extractTopicLinks(firstPage.text, initialSourceUrl));
   enqueuePageLinks(extractCollectionPageLinks(firstPage.text, initialSourceUrl));
+  diagnostics.log("collection.links.first_page", {
+    sourceMode: options.sourceMode || "collection",
+    links: topicLinks.length,
+    queuedPages: pagesQueue.length,
+    maxReleases
+  });
 
   while (pagesQueue.length > 0 && topicLinks.length < maxReleases) {
     const nextPageUrl = pagesQueue.shift();
@@ -1381,12 +1404,26 @@ async function collectTopicLinksFromCollectionPages(client, pageUrl, firstPage, 
 
     addTopicLinks(extractTopicLinks(page.text, pageSourceUrl));
     enqueuePageLinks(extractCollectionPageLinks(page.text, pageSourceUrl));
+    diagnostics.log("collection.links.page", {
+      sourceMode: options.sourceMode || "collection",
+      pageUrl: pageSourceUrl,
+      links: topicLinks.length,
+      queuedPages: pagesQueue.length,
+      visitedPages: visitedPages.size
+    });
   }
 
+  diagnostics.log("collection.links.done", {
+    sourceMode: options.sourceMode || "collection",
+    links: topicLinks.length,
+    visitedPages: visitedPages.size,
+    durationMs: diagnostics.elapsedMs(startedAt)
+  });
   return topicLinks;
 }
 
 async function collectPopularReleaseLinksFromForumPages(client, pageUrl, firstPage, options) {
+  const startedAt = diagnostics.startTimer();
   const maxReleases =
     Number.isFinite(options.maxReleases) && options.maxReleases > 0
       ? Math.max(1, Number.parseInt(String(options.maxReleases), 10))
@@ -1426,8 +1463,10 @@ async function collectPopularReleaseLinksFromForumPages(client, pageUrl, firstPa
   }
 
   async function processForumPage(forumPage) {
+    const forumStartedAt = diagnostics.startTimer();
     const forumPageUrl = forumPage.url || pageUrl;
     const chartLinks = extractPopularChartTopicLinks(forumPage.text, forumPageUrl);
+    let processedCharts = 0;
 
     for (const chartTopicUrl of chartLinks) {
       if (releaseLinks.length >= maxReleases) {
@@ -1440,6 +1479,7 @@ async function collectPopularReleaseLinksFromForumPages(client, pageUrl, firstPa
         continue;
       }
       chartTopicKeys.add(chartKey);
+      processedCharts += 1;
 
       const chartPage = await client.request(chartTopicUrl);
       if (!chartPage.ok) {
@@ -1450,7 +1490,20 @@ async function collectPopularReleaseLinksFromForumPages(client, pageUrl, firstPa
         ? Math.max(1, maxReleases - releaseLinks.length)
         : Number.POSITIVE_INFINITY;
       addReleaseLinks(extractTopicLinks(chartPage.text, chartPage.url || chartTopicUrl, remaining));
+      diagnostics.log("popular.chart_topic.done", {
+        chartTopicId: diagnostics.topicIdFromUrl(chartTopicUrl),
+        releases: releaseLinks.length,
+        remaining
+      });
     }
+
+    diagnostics.log("popular.forum_page.done", {
+      pageUrl: forumPageUrl,
+      chartLinks: chartLinks.length,
+      processedCharts,
+      releases: releaseLinks.length,
+      durationMs: diagnostics.elapsedMs(forumStartedAt)
+    });
   }
 
   const initialSourceUrl = firstPage.url || pageUrl;
@@ -1472,6 +1525,11 @@ async function collectPopularReleaseLinksFromForumPages(client, pageUrl, firstPa
 
   await processForumPage(firstPage);
   enqueuePageLinks(extractCollectionPageLinks(firstPage.text, initialSourceUrl));
+  diagnostics.log("popular.first_page.done", {
+    releases: releaseLinks.length,
+    queuedPages: pagesQueue.length,
+    maxReleases
+  });
 
   while (pagesQueue.length > 0 && releaseLinks.length < maxReleases) {
     const nextPageUrl = pagesQueue.shift();
@@ -1491,18 +1549,40 @@ async function collectPopularReleaseLinksFromForumPages(client, pageUrl, firstPa
     visitedPages.add(normalizeCollectionPageUrl(forumPageUrl));
     await processForumPage(forumPage);
     enqueuePageLinks(extractCollectionPageLinks(forumPage.text, forumPageUrl));
+    diagnostics.log("popular.page.done", {
+      pageUrl: forumPageUrl,
+      releases: releaseLinks.length,
+      queuedPages: pagesQueue.length,
+      visitedPages: visitedPages.size
+    });
   }
 
+  diagnostics.log("popular.links.done", {
+    releases: releaseLinks.length,
+    chartTopics: chartTopicKeys.size,
+    visitedPages: visitedPages.size,
+    durationMs: diagnostics.elapsedMs(startedAt)
+  });
   return releaseLinks;
 }
 
 async function parseReleasesFromCollection(client, pageUrl, options) {
+  const collectionStartedAt = diagnostics.startTimer();
+  const collectionCpuStart = process.cpuUsage();
   const runtimeOptions = options || {};
   const releaseCache = runtimeOptions.releaseCache || null;
   const concurrency =
     Number.isFinite(runtimeOptions.concurrency) && runtimeOptions.concurrency > 0
       ? runtimeOptions.concurrency
       : 4;
+
+  diagnostics.log("collection.start", {
+    sourceMode: runtimeOptions.sourceMode || "collection",
+    pageUrl,
+    maxReleases: runtimeOptions.maxReleases,
+    concurrency,
+    memory: diagnostics.processSnapshot()
+  });
 
   const listPage = await client.request(pageUrl);
   if (!listPage.ok) {
@@ -1513,6 +1593,13 @@ async function parseReleasesFromCollection(client, pageUrl, options) {
     runtimeOptions.sourceMode === "popular"
       ? await collectPopularReleaseLinksFromForumPages(client, pageUrl, listPage, runtimeOptions)
       : await collectTopicLinksFromCollectionPages(client, pageUrl, listPage, runtimeOptions);
+
+  diagnostics.log("collection.topic_links.ready", {
+    sourceMode: runtimeOptions.sourceMode || "collection",
+    totalFound: topicLinks.length,
+    durationMs: diagnostics.elapsedMs(collectionStartedAt)
+  });
+
   if (!topicLinks.length) {
     const $ = cheerio.load(listPage.text);
     const hasTorrentBlock = $("#tor-reged").length > 0;
@@ -1522,22 +1609,47 @@ async function parseReleasesFromCollection(client, pageUrl, options) {
       }
 
       let release = null;
+      let cacheStatus = "disabled";
       if (releaseCache && typeof releaseCache.getByTopicUrl === "function") {
         const cachedRelease = releaseCache.getByTopicUrl(pageUrl);
         if (isCachedReleaseUsable(cachedRelease)) {
           release = buildCachedRelease(cachedRelease);
+          cacheStatus = "hit";
+        } else {
+          cacheStatus = "miss";
         }
       }
 
+      const releaseStartedAt = diagnostics.startTimer();
+      let parseMs = 0;
+      let enrichMs = 0;
       if (!release) {
+        const parseStartedAt = diagnostics.startTimer();
         release = parseReleasePage(pageUrl, listPage.text);
+        parseMs = diagnostics.elapsedMs(parseStartedAt);
+        const enrichStartedAt = diagnostics.startTimer();
         release = await enrichReleaseScreenshots(release, runtimeOptions);
+        enrichMs = diagnostics.elapsedMs(enrichStartedAt);
         if (releaseCache && typeof releaseCache.upsert === "function") {
           releaseCache.upsert(release);
         }
       } else {
+        const enrichStartedAt = diagnostics.startTimer();
         release = await enrichReleaseScreenshots(release, runtimeOptions);
+        enrichMs = diagnostics.elapsedMs(enrichStartedAt);
       }
+
+      diagnostics.log("release.done", {
+        index: 0,
+        total: 1,
+        topicId: diagnostics.topicIdFromUrl(pageUrl),
+        cache: cacheStatus,
+        parseMs,
+        enrichMs,
+        screenshots: Array.isArray(release?.screenshots) ? release.screenshots.length : 0,
+        tags: Array.isArray(release?.tags) ? release.tags.length : 0,
+        durationMs: diagnostics.elapsedMs(releaseStartedAt)
+      });
 
       if (typeof runtimeOptions.onProgress === "function") {
         runtimeOptions.onProgress({
@@ -1548,11 +1660,20 @@ async function parseReleasesFromCollection(client, pageUrl, options) {
         });
       }
 
-      return {
+      const result = {
         sourceUrl: pageUrl,
         totalFound: 1,
         releases: [release]
       };
+      diagnostics.log("collection.done", {
+        sourceMode: runtimeOptions.sourceMode || "single",
+        totalFound: 1,
+        parsed: 1,
+        durationMs: diagnostics.elapsedMs(collectionStartedAt),
+        cpu: diagnostics.cpuDeltaMs(collectionCpuStart),
+        memory: diagnostics.processSnapshot()
+      });
+      return result;
     }
 
     throw new Error("No release links found on source page.");
@@ -1567,7 +1688,12 @@ async function parseReleasesFromCollection(client, pageUrl, options) {
   const releases = await mapWithConcurrency(
     topicLinks,
     concurrency,
-    async (topicUrl) => {
+    async (topicUrl, index) => {
+      const releaseStartedAt = diagnostics.startTimer();
+      let cacheStatus = "disabled";
+      let fetchMs = 0;
+      let parseMs = 0;
+      let enrichMs = 0;
       try {
         let release = null;
 
@@ -1575,26 +1701,65 @@ async function parseReleasesFromCollection(client, pageUrl, options) {
           const cachedRelease = releaseCache.getByTopicUrl(topicUrl);
           if (isCachedReleaseUsable(cachedRelease)) {
             release = buildCachedRelease(cachedRelease);
+            cacheStatus = "hit";
+          } else {
+            cacheStatus = "miss";
           }
         }
 
         if (!release) {
+          const fetchStartedAt = diagnostics.startTimer();
           const page = await client.request(topicUrl);
+          fetchMs = diagnostics.elapsedMs(fetchStartedAt);
           if (!page.ok) {
             throw new Error(`HTTP ${page.status}`);
           }
 
+          const parseStartedAt = diagnostics.startTimer();
           release = parseReleasePage(topicUrl, page.text);
+          parseMs = diagnostics.elapsedMs(parseStartedAt);
+          const enrichStartedAt = diagnostics.startTimer();
           release = await enrichReleaseScreenshots(release, runtimeOptions);
+          enrichMs = diagnostics.elapsedMs(enrichStartedAt);
           if (releaseCache && typeof releaseCache.upsert === "function") {
             releaseCache.upsert(release);
           }
         } else {
+          const enrichStartedAt = diagnostics.startTimer();
           release = await enrichReleaseScreenshots(release, runtimeOptions);
+          enrichMs = diagnostics.elapsedMs(enrichStartedAt);
+        }
+
+        const durationMs = diagnostics.elapsedMs(releaseStartedAt);
+        if (diagnostics.shouldLogRelease(durationMs)) {
+          diagnostics.log("release.done", {
+            index,
+            total: topicLinks.length,
+            topicId: diagnostics.topicIdFromUrl(topicUrl),
+            cache: cacheStatus,
+            fetchMs,
+            parseMs,
+            enrichMs,
+            screenshots: Array.isArray(release?.screenshots) ? release.screenshots.length : 0,
+            tags: Array.isArray(release?.tags) ? release.tags.length : 0,
+            fromCache: Boolean(release?.fromCache),
+            durationMs
+          });
         }
 
         return release;
       } catch (error) {
+        diagnostics.log("release.error", {
+          index,
+          total: topicLinks.length,
+          topicId: diagnostics.topicIdFromUrl(topicUrl),
+          cache: cacheStatus,
+          fetchMs,
+          parseMs,
+          enrichMs,
+          durationMs: diagnostics.elapsedMs(releaseStartedAt),
+          error: error.message
+        });
         return {
           topicId: parseTopicIdFromUrl(topicUrl),
           topicUrl,
@@ -1614,6 +1779,16 @@ async function parseReleasesFromCollection(client, pageUrl, options) {
     },
     ({ index, result }) => {
       processed += 1;
+      if (diagnostics.shouldLogProgress(processed, topicLinks.length)) {
+        diagnostics.log("collection.progress", {
+          processed,
+          totalFound: topicLinks.length,
+          lastIndex: index,
+          lastError: result?.error || "",
+          elapsedMs: diagnostics.elapsedMs(collectionStartedAt),
+          memory: diagnostics.processSnapshot()
+        });
+      }
       if (typeof runtimeOptions.onProgress === "function") {
         runtimeOptions.onProgress({
           processed,
@@ -1625,11 +1800,21 @@ async function parseReleasesFromCollection(client, pageUrl, options) {
     }
   );
 
-  return {
+  const result = {
     sourceUrl: pageUrl,
     totalFound: topicLinks.length,
     releases
   };
+  diagnostics.log("collection.done", {
+    sourceMode: runtimeOptions.sourceMode || "collection",
+    totalFound: topicLinks.length,
+    parsed: releases.length,
+    errors: releases.filter((release) => release?.error).length,
+    durationMs: diagnostics.elapsedMs(collectionStartedAt),
+    cpu: diagnostics.cpuDeltaMs(collectionCpuStart),
+    memory: diagnostics.processSnapshot()
+  });
+  return result;
 }
 
 module.exports = {

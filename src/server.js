@@ -10,6 +10,9 @@ const { parseReleasePage, parseReleasesFromCollection, enrichReleaseScreenshots 
 const { createCategoryStore } = require("./categoryStore");
 const { createSavedSearchStore, normalizeSearchName, normalizeSearchUrl } = require("./savedSearchStore");
 const { createReleaseCacheStore } = require("./releaseCacheStore");
+const diagnostics = require("./diagnostics");
+
+diagnostics.configure(config.diagnostics);
 
 const app = express();
 const parseJobs = new Map();
@@ -587,8 +590,14 @@ async function createLoggedClient() {
     throw new Error("Missing tracker credentials. Set TRACKER_USERNAME and TRACKER_PASSWORD.");
   }
 
+  const startedAt = diagnostics.startTimer();
   const client = new TrackerClient(config.tracker);
+  diagnostics.log("tracker.login.start");
   await client.login();
+  diagnostics.log("tracker.login.done", {
+    durationMs: diagnostics.elapsedMs(startedAt),
+    memory: diagnostics.processSnapshot()
+  });
   return client;
 }
 
@@ -1010,6 +1019,12 @@ app.post("/api/release", async (request, response) => {
   }
 
   try {
+    const startedAt = diagnostics.startTimer();
+    const cpuStart = process.cpuUsage();
+    diagnostics.log("single_release.start", {
+      releaseUrl,
+      memory: diagnostics.processSnapshot()
+    });
     const client = await createLoggedClient();
     const page = await client.request(releaseUrl);
 
@@ -1017,14 +1032,32 @@ app.post("/api/release", async (request, response) => {
       return response.status(502).json({ error: `Failed to load release page (HTTP ${page.status}).` });
     }
 
+    const parseStartedAt = diagnostics.startTimer();
     let release = parseReleasePage(releaseUrl, page.text);
+    const parseMs = diagnostics.elapsedMs(parseStartedAt);
+    const enrichStartedAt = diagnostics.startTimer();
     release = await enrichReleaseScreenshots(release);
+    const enrichMs = diagnostics.elapsedMs(enrichStartedAt);
     if (release.category) {
       categoryStore.ensureCategory(release.category);
     }
     ensureReleaseTags(release.tags);
+    diagnostics.log("single_release.done", {
+      topicId: diagnostics.topicIdFromUrl(releaseUrl),
+      parseMs,
+      enrichMs,
+      screenshots: Array.isArray(release?.screenshots) ? release.screenshots.length : 0,
+      tags: Array.isArray(release?.tags) ? release.tags.length : 0,
+      durationMs: diagnostics.elapsedMs(startedAt),
+      cpu: diagnostics.cpuDeltaMs(cpuStart),
+      memory: diagnostics.processSnapshot()
+    });
     return response.json({ release });
   } catch (error) {
+    diagnostics.log("single_release.error", {
+      releaseUrl,
+      error: error.message
+    });
     return response.status(500).json({ error: error.message || "Unexpected server error." });
   }
 });
@@ -1039,6 +1072,15 @@ app.post("/api/releases", async (request, response) => {
   const maxReleases = resolveMaxReleases(request.body?.maxReleases);
 
   try {
+    const startedAt = diagnostics.startTimer();
+    const cpuStart = process.cpuUsage();
+    diagnostics.log("releases.sync.start", {
+      sourceMode: source.mode,
+      pageUrl,
+      maxReleases,
+      concurrency: config.tracker.concurrency,
+      memory: diagnostics.processSnapshot()
+    });
     const client = await createLoggedClient();
     const result = await parseReleasesFromCollection(client, pageUrl, {
       maxReleases,
@@ -1053,8 +1095,22 @@ app.post("/api/releases", async (request, response) => {
       defaultEnabled: true
     });
 
+    diagnostics.log("releases.sync.done", {
+      sourceMode: source.mode,
+      totalFound: result.totalFound,
+      parsed: Array.isArray(result.releases) ? result.releases.length : 0,
+      durationMs: diagnostics.elapsedMs(startedAt),
+      cpu: diagnostics.cpuDeltaMs(cpuStart),
+      memory: diagnostics.processSnapshot()
+    });
     return response.json(result);
   } catch (error) {
+    diagnostics.log("releases.sync.error", {
+      sourceMode: source.mode,
+      pageUrl,
+      maxReleases,
+      error: error.message
+    });
     return response.status(500).json({ error: error.message || "Unexpected server error." });
   }
 });
@@ -1086,6 +1142,17 @@ app.post("/api/releases/job", async (request, response) => {
   };
 
   parseJobs.set(jobId, job);
+  const jobStartedAt = diagnostics.startTimer();
+  const jobCpuStart = process.cpuUsage();
+  diagnostics.log("job.start", {
+    jobId,
+    sourceMode: source.mode,
+    pageUrl,
+    maxReleases,
+    concurrency: config.tracker.concurrency,
+    diagnostics: diagnostics.configSnapshot(),
+    memory: diagnostics.processSnapshot()
+  });
 
   function throwIfCancelled() {
     if (job.cancelled) {
@@ -1107,6 +1174,12 @@ app.post("/api/releases/job", async (request, response) => {
           throwIfCancelled();
           job.totalFound = totalFound;
           job.updatedAt = Date.now();
+          diagnostics.log("job.discovered", {
+            jobId,
+            totalFound,
+            elapsedMs: diagnostics.elapsedMs(jobStartedAt),
+            memory: diagnostics.processSnapshot()
+          });
         },
         onProgress: ({ processed, totalFound, index, release }) => {
           throwIfCancelled();
@@ -1118,12 +1191,31 @@ app.post("/api/releases/job", async (request, response) => {
           }
           ensureReleaseTags(release?.tags);
           job.updatedAt = Date.now();
+          if (diagnostics.shouldLogProgress(processed, totalFound)) {
+            diagnostics.log("job.progress", {
+              jobId,
+              processed,
+              totalFound,
+              index,
+              releaseError: release?.error || "",
+              elapsedMs: diagnostics.elapsedMs(jobStartedAt),
+              memory: diagnostics.processSnapshot()
+            });
+          }
         }
       });
 
       if (job.cancelled) {
         job.status = "cancelled";
         job.updatedAt = Date.now();
+        diagnostics.log("job.cancelled", {
+          jobId,
+          processed: job.processed,
+          totalFound: job.totalFound,
+          durationMs: diagnostics.elapsedMs(jobStartedAt),
+          cpu: diagnostics.cpuDeltaMs(jobCpuStart),
+          memory: diagnostics.processSnapshot()
+        });
         return;
       }
 
@@ -1135,12 +1227,38 @@ app.post("/api/releases/job", async (request, response) => {
         defaultEnabled: true
       });
       job.updatedAt = Date.now();
+      diagnostics.log("job.done", {
+        jobId,
+        totalFound: job.totalFound,
+        processed: job.processed,
+        errors: job.releases.filter((release) => release?.error).length,
+        durationMs: diagnostics.elapsedMs(jobStartedAt),
+        cpu: diagnostics.cpuDeltaMs(jobCpuStart),
+        memory: diagnostics.processSnapshot()
+      });
     } catch (error) {
       if (error?.code === "JOB_CANCELLED" || job.cancelled) {
         job.status = "cancelled";
+        diagnostics.log("job.cancelled", {
+          jobId,
+          processed: job.processed,
+          totalFound: job.totalFound,
+          durationMs: diagnostics.elapsedMs(jobStartedAt),
+          cpu: diagnostics.cpuDeltaMs(jobCpuStart),
+          memory: diagnostics.processSnapshot()
+        });
       } else {
         job.status = "error";
         job.error = error.message || "Unexpected server error.";
+        diagnostics.log("job.error", {
+          jobId,
+          processed: job.processed,
+          totalFound: job.totalFound,
+          durationMs: diagnostics.elapsedMs(jobStartedAt),
+          cpu: diagnostics.cpuDeltaMs(jobCpuStart),
+          memory: diagnostics.processSnapshot(),
+          error: job.error
+        });
       }
       job.updatedAt = Date.now();
     }
@@ -1234,4 +1352,13 @@ process.on("beforeExit", flushAllStoresOnExit);
 app.listen(config.app.port, () => {
   // Keep startup logs short and deterministic for container logs.
   console.log(`TrackerView ${config.app.version} started on port ${config.app.port}`);
+  diagnostics.log("app.started", {
+    version: config.app.version,
+    port: config.app.port,
+    concurrency: config.tracker.concurrency,
+    maxReleases: config.tracker.maxReleases,
+    hardMaxReleases: config.tracker.hardMaxReleases,
+    diagnostics: diagnostics.configSnapshot(),
+    memory: diagnostics.processSnapshot()
+  });
 });

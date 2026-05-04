@@ -13,3 +13,11 @@ hard_max_releases = 700
 concurrency = 4
 request_timeout_ms = 25000
 user_agent = "TrackerViewBot/0.1 (+https://localhost)"
+
+[diagnostics]
+enabled = false
+log_requests = true
+log_release_details = true
+slow_request_ms = 1000
+slow_release_ms = 2000
+progress_every = 10

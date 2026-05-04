@@ -147,6 +147,36 @@ Update-скрипт останавливает локальный Node.js-про
 | `tracker.concurrency` | `4` | нет | Параллелизм парсинга страниц релизов |
 | `tracker.request_timeout_ms` | `25000` | нет | HTTP timeout для запросов к трекеру |
 | `tracker.user_agent` | `TrackerViewBot/0.1 (+https://localhost)` | нет | User-Agent запросов к трекеру |
+| `diagnostics.enabled` | `false` | нет | Включает расширенные JSON-логи производительности |
+| `diagnostics.log_requests` | `true` | нет | Логирует HTTP-запросы к трекеру/внешним страницам: статус, байты, длительность |
+| `diagnostics.log_release_details` | `true` | нет | Логирует подробности по каждому релизу: cache hit/miss, fetch/parse/enrich timings |
+| `diagnostics.slow_request_ms` | `1000` | нет | Порог медленного HTTP-запроса, мс |
+| `diagnostics.slow_release_ms` | `2000` | нет | Порог медленной обработки релиза, мс |
+| `diagnostics.progress_every` | `10` | нет | Частота progress-логов по обработанным релизам |
+
+На NAS при запуске через `scripts/nas-start.sh` диагностические логи пишутся в:
+
+```text
+/volume1/docker/trackerview/logs/trackerview.log
+```
+
+Для анализа медленной большой выборки включите:
+
+```toml
+[diagnostics]
+enabled = true
+log_requests = true
+log_release_details = true
+slow_request_ms = 1000
+slow_release_ms = 2000
+progress_every = 10
+```
+
+Сводка по собранным диагностическим логам:
+
+```bash
+node scripts/diagnostics-summary.js logs/trackerview.log
+```
 
 ### `.env`
 
@@ -171,6 +201,7 @@ Update-скрипт останавливает локальный Node.js-про
 - `npm run start:local` — локальный запуск сервера.
 - `npm run dev` — запуск с `nodemon`.
 - `npm run release` — сборка NAS-local release-пакета в `release/<version>`.
+- `npm run diagnostics:summary -- logs/trackerview.log` — сводка по JSON-логам диагностики.
 - `npm run check:live` — health-check + опциональные проверки релиза/коллекции.
 - `npm run dev:battle` — поднимает сервер, ждет health, запускает live-check.
 

@@ -8,6 +8,21 @@ function toNumber(value, fallback) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function toBoolean(value, fallback) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+  return fallback;
+}
+
 function readConfigValue(source, pathSegments) {
   let current = source;
   for (const segment of pathSegments) {
@@ -76,6 +91,36 @@ const config = {
     ),
     userAgent: String(
       valueFromEnvOrConfig("TRACKER_USER_AGENT", ["tracker", "user_agent"], "TrackerViewBot/0.1 (+https://localhost)")
+    )
+  },
+  diagnostics: {
+    enabled: toBoolean(
+      valueFromEnvOrConfig("TRACKERVIEW_DIAGNOSTICS", ["diagnostics", "enabled"], false),
+      false
+    ),
+    logRequests: toBoolean(
+      valueFromEnvOrConfig("TRACKERVIEW_DIAGNOSTICS_LOG_REQUESTS", ["diagnostics", "log_requests"], true),
+      true
+    ),
+    logReleaseDetails: toBoolean(
+      valueFromEnvOrConfig(
+        "TRACKERVIEW_DIAGNOSTICS_LOG_RELEASE_DETAILS",
+        ["diagnostics", "log_release_details"],
+        true
+      ),
+      true
+    ),
+    slowRequestMs: toNumber(
+      valueFromEnvOrConfig("TRACKERVIEW_DIAGNOSTICS_SLOW_REQUEST_MS", ["diagnostics", "slow_request_ms"], 1000),
+      1000
+    ),
+    slowReleaseMs: toNumber(
+      valueFromEnvOrConfig("TRACKERVIEW_DIAGNOSTICS_SLOW_RELEASE_MS", ["diagnostics", "slow_release_ms"], 2000),
+      2000
+    ),
+    progressEvery: toNumber(
+      valueFromEnvOrConfig("TRACKERVIEW_DIAGNOSTICS_PROGRESS_EVERY", ["diagnostics", "progress_every"], 10),
+      10
     )
   }
 };

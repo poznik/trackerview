@@ -1,6 +1,6 @@
 {
   "name": "trackerview",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Web app for parsing tracker release pages into a table view",
   "main": "src/server.js",
@@ -10,6 +10,7 @@
     "start:local": "node src/server.js",
     "test": "node --test \"test/**/*.test.js\"",
     "release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-release.ps1",
+    "diagnostics:summary": "node scripts/diagnostics-summary.js",
     "check:live": "bash scripts/check-live.sh",
     "dev:battle": "bash scripts/dev-with-check.sh"
   },

@@ -1,4 +1,5 @@
 const iconv = require("iconv-lite");
+const diagnostics = require("./diagnostics");
 
 class SimpleCookieJar {
   constructor() {
@@ -94,9 +95,11 @@ class TrackerClient {
   }
 
   async request(pathOrUrl, options = {}) {
+    const requestStartedAt = diagnostics.startTimer();
     let currentUrl = this.resolveUrl(pathOrUrl);
     let method = options.method || "GET";
     let body = options.body;
+    let redirectCount = 0;
     if (!body && options.form) {
       body = new URLSearchParams(options.form).toString();
     }
@@ -108,7 +111,7 @@ class TrackerClient {
 
     let response = null;
 
-    for (let redirectCount = 0; redirectCount < 8; redirectCount += 1) {
+    for (; redirectCount < 8; redirectCount += 1) {
       const headers = new Headers(baseHeaders);
       headers.set("user-agent", this.userAgent);
       headers.set("accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8");
@@ -162,6 +165,18 @@ class TrackerClient {
     }
 
     const buffer = Buffer.from(await response.arrayBuffer());
+    diagnostics.logHttpRequest({
+      method,
+      url: currentUrl,
+      status: response.status,
+      ok: response.ok,
+      bytes: buffer.length,
+      durationMs: diagnostics.elapsedMs(requestStartedAt),
+      redirects: redirectCount,
+      contentType: response.headers.get("content-type") || "",
+      context: options.diagnosticContext || ""
+    });
+
     return {
       url: currentUrl,
       status: response.status,

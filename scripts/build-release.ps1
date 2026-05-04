@@ -62,6 +62,7 @@ Copy-ReleaseItem "favico.png"
 Copy-ReleaseItem "scripts/wait-for-health.sh"
 Copy-ReleaseItem "scripts/nas-start.sh"
 Copy-ReleaseItem "scripts/nas-stop.sh"
+Copy-ReleaseItem "scripts/diagnostics-summary.js"
 Copy-Item -LiteralPath $resolvedConfigPath -Destination (Join-Path $releaseDir "config.toml") -Force
 
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -115,6 +116,12 @@ The in-app Update button runs:
 ~~~
 
 It fetches `origin/main`, installs production dependencies, restarts the local Node.js service, and waits for `/api/health`.
+
+Summarize diagnostic logs:
+
+~~~sh
+node scripts/diagnostics-summary.js logs/trackerview.log
+~~~
 "@
 
 [System.IO.File]::WriteAllText((Join-Path $releaseDir "INSTALL_NAS.md"), $installDoc + [Environment]::NewLine, $utf8NoBom)
@@ -136,6 +143,7 @@ $manifest = [ordered]@{
     "scripts/wait-for-health.sh",
     "scripts/nas-start.sh",
     "scripts/nas-stop.sh",
+    "scripts/diagnostics-summary.js",
     "update.sh",
     "config.toml",
     "config.toml.example",
